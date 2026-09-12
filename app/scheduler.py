@@ -116,8 +116,7 @@ def start_scheduler(bot: Bot) -> None:
     scheduler.add_job(
         check_subscriptions,
         trigger="cron",
-        hour=10,
-        minute=0,
+        minute="*",
         args=[bot],
         id="check_subscriptions",
         replace_existing=True,
