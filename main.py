@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from app.handlers import router
 from app.database import init_db
 from app.middlewares import DbSessionMiddleware
+from app.scheduler import start_scheduler, stop_scheduler
 
 
 async def main():
@@ -43,12 +44,14 @@ async def main():
     await dp.start_polling(bot)
 
 
-async def startup(dispatcher: Dispatcher):
+async def startup(dispatcher: Dispatcher, bot: Bot):
     print("Bot starting up....")
+    start_scheduler(bot)
 
 
 async def shutdown(dispatcher: Dispatcher):
     print("Bot is shutting down...")
+    stop_scheduler()
 
 
 if __name__ == "__main__":

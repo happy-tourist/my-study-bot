@@ -3,6 +3,7 @@ FROM python:3.13-slim
 # Устанавливаем корневые сертификаты (чтобы Python доверял SSL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
