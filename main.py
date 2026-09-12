@@ -1,50 +1,45 @@
 import os
-import ssl
-import socket
+import sys
 import asyncio
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 
 from app.handlers import router
 from app.database import init_db
 from app.middlewares import DbSessionMiddleware
 
-# Укажите здесь данные вашего прокси
-# Формат: socks5://логин:пароль@хост:порт
-PROXY_URL = "socks5://127.0.0.1:1080"  # <-- Замените на ваш прокси
-
 
 async def main():
     load_dotenv()
 
-    # --- Локальная отладка: SSL + IPv4 + Прокси ---
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
+    if sys.platform == "win32":
+        # Локальная отладка на Windows (VPN, SSL-обход, IPv4)
+        import ssl
+        import socket
+        from aiogram.client.session.aiohttp import AiohttpSession
 
-    # proxy= подключает ProxyConnector через aiohttp-socks
-    session = AiohttpSession(proxy=PROXY_URL)
-    session._connector_init.update({
-        "family": socket.AF_INET,
-        "ssl": ssl_context,
-    })
-    # -----------------------------------------------
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
 
-    bot = Bot(token=os.getenv("TG_TOKEN"), session=session)
+        session = AiohttpSession()
+        session._connector_init.update({
+            "family": socket.AF_INET,
+            "ssl": ssl_context,
+        })
+        bot = Bot(token=os.getenv("TG_TOKEN"), session=session)
+    else:
+        # Linux / сервер — чистый вариант
+        bot = Bot(token=os.getenv("TG_TOKEN"))
+
     dp = Dispatcher()
-
-    # Подключаем middleware — он будет передавать session в хендлеры
     dp.update.middleware(DbSessionMiddleware())
-
-    # Инициализируем БД (создаём таблицы)
     await init_db()
 
     dp.include_router(router)
     dp.startup.register(startup)
     dp.shutdown.register(shutdown)
-
     await dp.start_polling(bot)
 
 
