@@ -8,6 +8,8 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from dotenv import load_dotenv
 
 from app.handlers import router
+from app.database import init_db
+from app.middlewares import DbSessionMiddleware
 
 # Укажите здесь данные вашего прокси
 # Формат: socks5://логин:пароль@хост:порт
@@ -32,9 +34,17 @@ async def main():
 
     bot = Bot(token=os.getenv("TG_TOKEN"), session=session)
     dp = Dispatcher()
+
+    # Подключаем middleware — он будет передавать session в хендлеры
+    dp.update.middleware(DbSessionMiddleware())
+
+    # Инициализируем БД (создаём таблицы)
+    await init_db()
+
     dp.include_router(router)
     dp.startup.register(startup)
     dp.shutdown.register(shutdown)
+
     await dp.start_polling(bot)
 
 
