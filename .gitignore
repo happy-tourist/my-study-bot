@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+*.pyc
 *.py[cod]
 *.pyo
 *.pyd
@@ -17,6 +18,9 @@ build/
 # Virtual env
 .venv/
 venv/
+
+# App data
+data/
 
 # Editors
 .vscode/
