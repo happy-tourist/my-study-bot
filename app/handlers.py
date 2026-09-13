@@ -92,10 +92,35 @@ async def menu_houses(callback: CallbackQuery, session: AsyncSession):
 
 
 @router.callback_query(F.data == kb.MENU_SUBSCRIPTION)
-async def menu_subscription(callback: CallbackQuery):
+async def menu_subscription(callback: CallbackQuery, session: AsyncSession):
+    user = await _load_user(session, callback.from_user.id)
+    show_trial = user is not None and not user.trial_used
     await callback.message.edit_text(
         "Выбери тариф подписки:",
-        reply_markup=kb.tariffs_kb(),
+        reply_markup=kb.tariffs_kb(show_trial=show_trial),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == kb.CLAIM_TRIAL)
+async def claim_trial(callback: CallbackQuery, session: AsyncSession):
+    user = await _load_user(session, callback.from_user.id)
+    if user is None:
+        await callback.answer("Сначала нажми /start", show_alert=True)
+        return
+    if user.trial_used:
+        await callback.answer("Пробный период уже использован", show_alert=True)
+        return
+
+    user.trial_used = True
+    user.is_active = True
+    user.subscription_end = datetime.utcnow() + timedelta(minutes=TRIAL_MINUTES)
+    await session.commit()
+
+    await callback.message.edit_text(
+        "Тебе активирован пробный период на 3 дня (3 мин).\n\n"
+        "Выбери раздел:",
+        reply_markup=kb.main_menu_kb(),
     )
     await callback.answer()
 

@@ -7,6 +7,7 @@ MENU_SUBSCRIPTION = "menu:subscription"
 MENU_BACK = "menu:back"
 
 TARIFF_PREFIX = "tariff:"
+CLAIM_TRIAL = "trial:claim"
 
 TARIFFS = {
     "1_month": {
@@ -51,8 +52,10 @@ def subscription_required_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def tariffs_kb() -> InlineKeyboardMarkup:
+def tariffs_kb(*, show_trial: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    if show_trial:
+        b.button(text="🎁 Получить пробный период", callback_data=CLAIM_TRIAL)
     for tariff_id, tariff in TARIFFS.items():
         b.button(
             text=f"{tariff['title']} — {tariff['price']}",

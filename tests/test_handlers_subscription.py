@@ -14,6 +14,7 @@ from app.database import User
 from app.handlers import (
     TRIAL_MINUTES,
     _SUBSCRIPTION_REQUIRED_TEXT,
+    claim_trial,
     cmd_start,
     menu_back,
     menu_cars,
@@ -153,7 +154,7 @@ async def test_tariffs_list_shows_three_plans_sc_tar_01(session: AsyncSession):
     await _seed_user(session, user_id=200, trial_used=True)
 
     callback = _make_callback(user_id=200, data=kb.MENU_SUBSCRIPTION)
-    await menu_subscription(callback)
+    await menu_subscription(callback, session)
 
     markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
     labels = [btn.text for row in markup.inline_keyboard for btn in row]
@@ -161,7 +162,48 @@ async def test_tariffs_list_shows_three_plans_sc_tar_01(session: AsyncSession):
     assert any("3 месяца (90 мин)" in t for t in labels)
     assert any("Навсегда (36500 мин)" in t for t in labels)
     assert any("Назад в меню" in t for t in labels)
+    assert not any("пробный период" in t.lower() for t in labels)
     callback.answer.assert_awaited_once()
+
+
+async def test_subscription_shows_claim_trial_when_unused(session: AsyncSession):
+    await _seed_user(session, user_id=210, trial_used=False)
+
+    callback = _make_callback(user_id=210, data=kb.MENU_SUBSCRIPTION)
+    await menu_subscription(callback, session)
+
+    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    labels = [btn.text for row in markup.inline_keyboard for btn in row]
+    assert any("Получить пробный период" in t for t in labels)
+
+
+async def test_claim_trial_grants_once_for_legacy_user(session: AsyncSession, monkeypatch):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=211,
+        trial_used=False,
+        is_active=False,
+        subscription_end=None,
+    )
+
+    callback = _make_callback(user_id=211, data=kb.CLAIM_TRIAL)
+    await claim_trial(callback, session)
+
+    result = await session.execute(select(User).where(User.id == 211))
+    user = result.scalar_one()
+    assert user.trial_used is True
+    assert user.is_active is True
+    assert user.subscription_end == NOW + timedelta(minutes=TRIAL_MINUTES)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert "3 дня (3 мин)" in text
+
+    callback2 = _make_callback(user_id=211, data=kb.CLAIM_TRIAL)
+    await claim_trial(callback2, session)
+    callback2.answer.assert_awaited_once()
+    assert "уже использован" in callback2.answer.await_args.args[0]
+    assert user.subscription_end == NOW + timedelta(minutes=TRIAL_MINUTES)
 
 
 @pytest.mark.parametrize(
@@ -300,7 +342,7 @@ async def test_subscription_open_without_gate_sc_menu_03(session: AsyncSession):
     )
 
     callback = _make_callback(user_id=304, data=kb.MENU_SUBSCRIPTION)
-    await menu_subscription(callback)
+    await menu_subscription(callback, session)
 
     text = callback.message.edit_text.await_args.args[0]
     assert "тариф" in text.lower()
