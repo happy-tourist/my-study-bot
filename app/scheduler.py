@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -19,21 +19,41 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
-_REMIND_DAYS = (3, 2, 1)
+_REMIND_NS = (3, 2, 1)
+
+# Temporary harness (D8): minute windows + cron minute="*".
+# Production revert (task 6.4): set to "day" and restore hour=10, minute=0.
+ExpiryWindowUnit = Literal["day", "minute"]
+EXPIRY_WINDOW_UNIT: ExpiryWindowUnit = "minute"
 
 
-def _reminder_text(days: int) -> str:
-    if days == 1:
+def _reminder_text(n: int, *, unit: ExpiryWindowUnit | None = None) -> str:
+    window_unit = unit or EXPIRY_WINDOW_UNIT
+    if window_unit == "minute":
+        if n == 1:
+            return "Ваша подписка истекает через 1 минуту."
+        return f"Ваша подписка истекает через {n} минуты."
+    if n == 1:
         return "Ваша подписка истекает через 1 день."
-    return f"Ваша подписка истекает через {days} дня."
+    return f"Ваша подписка истекает через {n} дня."
 
 
 _EXPIRED_TEXT = "Ваша подписка истекла."
 
 
-def reminder_window(now: datetime, days: int) -> tuple[datetime, datetime]:
-    """UTC-окно [now+N, now+N+1) для напоминания за N дней."""
-    return now + timedelta(days=days), now + timedelta(days=days + 1)
+def reminder_window(
+    now: datetime,
+    n: int,
+    *,
+    unit: ExpiryWindowUnit | None = None,
+) -> tuple[datetime, datetime]:
+    """UTC-окно [now+N, now+N+1) для напоминания за N единиц (день или минута)."""
+    window_unit = unit or EXPIRY_WINDOW_UNIT
+    delta = timedelta(minutes=n) if window_unit == "minute" else timedelta(days=n)
+    delta_next = (
+        timedelta(minutes=n + 1) if window_unit == "minute" else timedelta(days=n + 1)
+    )
+    return now + delta, now + delta_next
 
 
 def classify_subscription_action(
@@ -41,16 +61,18 @@ def classify_subscription_action(
     is_active: bool,
     subscription_end: datetime | None,
     now: datetime,
+    unit: ExpiryWindowUnit | None = None,
 ) -> str | None:
     """Чистая классификация: remind_3|remind_2|remind_1|expire|None."""
+    window_unit = unit or EXPIRY_WINDOW_UNIT
     if not is_active or subscription_end is None:
         return None
     if subscription_end < now:
         return "expire"
-    for days in _REMIND_DAYS:
-        window_start, window_end = reminder_window(now, days)
+    for n in _REMIND_NS:
+        window_start, window_end = reminder_window(now, n, unit=window_unit)
         if window_start <= subscription_end < window_end:
-            return f"remind_{days}"
+            return f"remind_{n}"
     return None
 
 
@@ -59,14 +81,16 @@ async def check_subscriptions(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     now: datetime | None = None,
+    unit: ExpiryWindowUnit | None = None,
 ) -> None:
-    """Напоминания за 3/2/1 день и деактивация истекших подписок."""
+    """Напоминания за 3/2/1 единицу окна и деактивация истекших подписок."""
     factory = session_factory or async_session
     check_now = now if now is not None else datetime.utcnow()
+    window_unit = unit or EXPIRY_WINDOW_UNIT
 
     async with factory() as session:
-        for days in _REMIND_DAYS:
-            window_start, window_end = reminder_window(check_now, days)
+        for n in _REMIND_NS:
+            window_start, window_end = reminder_window(check_now, n, unit=window_unit)
             result = await session.execute(
                 select(User).where(
                     and_(
@@ -78,7 +102,7 @@ async def check_subscriptions(
                 )
             )
             users = result.scalars().all()
-            text = _reminder_text(days)
+            text = _reminder_text(n, unit=window_unit)
             for user in users:
                 try:
                     await bot.send_message(user.id, text)
@@ -112,7 +136,7 @@ async def check_subscriptions(
 
 
 def start_scheduler(bot: Bot) -> None:
-    """Регистрирует ежедневный job и запускает планировщик."""
+    """Регистрирует job каждую минуту (временный харнесс) и запускает планировщик."""
     scheduler.add_job(
         check_subscriptions,
         trigger="cron",

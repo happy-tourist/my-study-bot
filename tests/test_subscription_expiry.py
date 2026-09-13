@@ -19,6 +19,9 @@ from app.scheduler import (
 # Фиксированная «сейчас» для детерминированных окон UTC-дней
 NOW = datetime(2026, 9, 12, 12, 0, 0)
 
+# Production day semantics — harness default is minute (D8)
+DAY = "day"
+
 
 async def _seed_user(
     session_factory,
@@ -59,14 +62,14 @@ async def _get_user(session_factory, user_id: int) -> User:
 def test_classify_reminder_windows(days: int, scenario: str):
     end = NOW + timedelta(days=days, hours=6)
     assert classify_subscription_action(
-        is_active=True, subscription_end=end, now=NOW
+        is_active=True, subscription_end=end, now=NOW, unit=DAY
     ) == f"remind_{days}", scenario
 
 
 def test_classify_no_end_sc_exp_04():
     assert (
         classify_subscription_action(
-            is_active=True, subscription_end=None, now=NOW
+            is_active=True, subscription_end=None, now=NOW, unit=DAY
         )
         is None
     )
@@ -76,7 +79,7 @@ def test_classify_expired_sc_exp_05():
     end = NOW - timedelta(hours=1)
     assert (
         classify_subscription_action(
-            is_active=True, subscription_end=end, now=NOW
+            is_active=True, subscription_end=end, now=NOW, unit=DAY
         )
         == "expire"
     )
@@ -103,9 +106,13 @@ async def test_reminder_sent_for_window(session_factory, days: int, scenario: st
     bot = AsyncMock()
     bot.send_message = AsyncMock()
 
-    await check_subscriptions(bot, session_factory=session_factory, now=NOW)
+    await check_subscriptions(
+        bot, session_factory=session_factory, now=NOW, unit=DAY
+    )
 
-    bot.send_message.assert_awaited_once_with(user_id, _reminder_text(days))
+    bot.send_message.assert_awaited_once_with(
+        user_id, _reminder_text(days, unit=DAY)
+    )
     user = await _get_user(session_factory, user_id)
     assert user.is_active is True, scenario
 
@@ -115,7 +122,9 @@ async def test_no_reminder_without_subscription_end_sc_exp_04(session_factory):
     bot = AsyncMock()
     bot.send_message = AsyncMock()
 
-    await check_subscriptions(bot, session_factory=session_factory, now=NOW)
+    await check_subscriptions(
+        bot, session_factory=session_factory, now=NOW, unit=DAY
+    )
 
     bot.send_message.assert_not_awaited()
     user = await _get_user(session_factory, 2004)
@@ -131,7 +140,9 @@ async def test_expired_deactivated_and_notified_sc_exp_05(session_factory):
     bot = AsyncMock()
     bot.send_message = AsyncMock()
 
-    await check_subscriptions(bot, session_factory=session_factory, now=NOW)
+    await check_subscriptions(
+        bot, session_factory=session_factory, now=NOW, unit=DAY
+    )
 
     bot.send_message.assert_awaited_once_with(2005, _EXPIRED_TEXT)
     user = await _get_user(session_factory, 2005)
@@ -165,11 +176,14 @@ async def test_failed_delivery_does_not_abort_sc_exp_06(session_factory):
 
     bot.send_message = AsyncMock(side_effect=send_side_effect)
 
-    await check_subscriptions(bot, session_factory=session_factory, now=NOW)
+    await check_subscriptions(
+        bot, session_factory=session_factory, now=NOW, unit=DAY
+    )
 
     # Напоминание N=2 всё равно ушло второму matching-пользователю
     assert any(
-        call.args == (3003, _reminder_text(2)) for call in bot.send_message.await_args_list
+        call.args == (3003, _reminder_text(2, unit=DAY))
+        for call in bot.send_message.await_args_list
     )
     # Уведомление об истечении второму expired-пользователю тоже ушло
     assert any(
