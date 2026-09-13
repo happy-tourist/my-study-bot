@@ -12,7 +12,7 @@ Main scenarios (target product; study **content** still stubby):
 
 - `/start` — upsert Telegram user into SQLite; first visit grants one-time trial (`trial_used`, 3 min / «3 дня»); greet + inline topic menu.
 - Persist user fields (Telegram id, username, `subscription_end`, `is_active`, `trial_used`).
-- «Подписка» — tariffs catalog (grant without payment); Cars/Houses gated via `has_active_subscription` (`app/auth.py`).
+- «Подписка» — tariffs catalog (grant without payment); one-time «Получить пробный период» when `trial_used` is False; Cars/Houses gated via `has_active_subscription` (`app/auth.py`).
 - (Planned) real study lesson flows / FSM forms — extend `app/handlers.py`, `app/states.py`, `app/keyboards.py`.
 
 ## Who The Users Are
