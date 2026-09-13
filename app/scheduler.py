@@ -21,10 +21,10 @@ scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
 _REMIND_NS = (3, 2, 1)
 
-# Temporary harness (D8): minute windows + cron minute="*".
-# Production revert (task 6.4): set to "day" and restore hour=10, minute=0.
+# Production default: day windows + daily cron (Europe/Moscow 10:00).
+# Minute unit remains available for parameterized tests / temporary harness.
 ExpiryWindowUnit = Literal["day", "minute"]
-EXPIRY_WINDOW_UNIT: ExpiryWindowUnit = "minute"
+EXPIRY_WINDOW_UNIT: ExpiryWindowUnit = "day"
 
 
 def _reminder_text(n: int, *, unit: ExpiryWindowUnit | None = None) -> str:
@@ -136,11 +136,12 @@ async def check_subscriptions(
 
 
 def start_scheduler(bot: Bot) -> None:
-    """Регистрирует job каждую минуту (временный харнесс) и запускает планировщик."""
+    """Регистрирует ежедневный job (10:00 Europe/Moscow) и запускает планировщик."""
     scheduler.add_job(
         check_subscriptions,
         trigger="cron",
-        minute="*",
+        hour=10,
+        minute=0,
         args=[bot],
         id="check_subscriptions",
         replace_existing=True,

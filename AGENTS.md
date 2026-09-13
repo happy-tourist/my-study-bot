@@ -32,22 +32,26 @@ Deploy target: VPS under `/home/deploy/my-study-bot`, Docker Compose + image fro
 | Expectation | Today |
 |-------------|--------|
 | Register user on `/start` | Implemented (`User` upsert + greet + inline topic menu) |
-| Subscription / study features | Schema has `subscription_end`, `is_active`; menu has Subscription stub (no gate); no real study handlers yet |
-| FSM forms / keyboards | `app/keyboards.py` has `main_menu_kb` / `back_to_menu_kb`; `app/states.py` still a stub |
+| Subscription / study features | Schema + expiry scheduler; Subscription menu has temporary 1m/5m test grants; study handlers / paid gates still stubby |
+| Background expiry | `app/scheduler.py` — day windows, daily cron 10:00 Europe/Moscow; reminds 3/2/1 days, deactivates on expire |
+| FSM forms / keyboards | `app/keyboards.py` has `main_menu_kb` / `back_to_menu_kb` / `subscription_kb`; `app/states.py` still a stub |
 | Modular routers | Single `app/handlers.py` router included from `main.py` |
 | `.env.example` | Missing — document vars here; add example when convenient |
+| Automated tests | `tests/` — pytest + pytest-asyncio (`test_subscription_expiry.py`) |
 
-When adding study/subscription behavior, prefer extending the existing `User` model and middleware session injection rather than inventing a parallel data path.
+When adding study/subscription behavior, prefer extending the existing `User` model and middleware session injection rather than inventing a parallel data path. Expiry side effects stay in `app/scheduler.py`.
 
 ## Core Stack
 - `aiogram` 3.22 - Telegram bot framework (Router, Dispatcher, polling).
 - `python-dotenv` - load `.env` in `main.py` / `app/database.py`.
 - `SQLAlchemy` 2.0 + `aiosqlite` - async ORM and SQLite driver.
+- `APScheduler` - `AsyncIOScheduler` for subscription expiry cron (`app/scheduler.py`).
 - Python `3.13` in Docker (`python:3.13-slim`); local README still mentions 3.10+.
 
 ## Development Tools
 - `python main.py` - run the bot (activate `.venv`, ensure `.env` has `TG_TOKEN`).
 - `pip install -r requirements.txt` - dependencies (no lockfile yet).
+- `pytest` - run the suite from this repo root (`tests/`).
 - Docker: `Dockerfile` + `docker-compose.yml` for VPS runtime.
 - Package manager: pip (`requirements.txt`).
 
@@ -59,7 +63,8 @@ Application entry: `main.py` → `asyncio.run(main())` → `dp.start_polling(bot
 3. `Dispatcher` + `DbSessionMiddleware` on updates.
 4. `await init_db()` — `Base.metadata.create_all` if tables missing.
 5. `dp.include_router(router)` from `app.handlers`.
-6. Register `startup` / `shutdown` hooks; `start_polling`.
+6. Register `startup` / `shutdown` hooks — `start_scheduler(bot)` / `stop_scheduler()`.
+7. `start_polling`.
 
 ## Config And Env
 No committed `.env.example` yet. Relevant variables (see local `.env` / server `.env`):
@@ -86,24 +91,29 @@ From `app/handlers.py` today:
 | Trigger | Behavior |
 |---------|----------|
 | `/start` | Create `User` if missing; greet; attach inline topic menu |
-| `menu:cars` / `menu:houses` / `menu:subscription` | Edit message to stub section + Back button |
+| `menu:cars` / `menu:houses` | Edit message to stub section + Back button |
+| `menu:subscription` | Subscription section + temporary test-grant keyboard |
+| `sub:test:1m` / `sub:test:5m` | Set `subscription_end` (+1 / +5 minutes), `is_active=True` |
 | `menu:back` | Edit message back to section-choice + main menu |
 
 Builders / stubs:
 
-- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()` (namespaced `menu:*` callbacks).
+- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()`, `subscription_kb()` (namespaced `menu:*` / `sub:test:*`).
 - `app/states.py` — FSM states (stub).
+- `app/scheduler.py` — daily expiry reminders + deactivation (see Core Stack).
 
 Keep Russian user-facing strings consistent with existing replies unless product copy is being redesigned.
 
 ## Combined Structure
-- `main.py` - process entry (Bot, Dispatcher, polling, platform-specific session).
+- `main.py` - process entry (Bot, Dispatcher, polling, platform-specific session, scheduler hooks).
 - `app/handlers.py` - routers / commands.
 - `app/database.py` - SQLAlchemy models + engine.
 - `app/middlewares.py` - DB session injection.
-- `app/keyboards.py` - inline topic-menu builders.
+- `app/keyboards.py` - inline topic-menu / subscription test builders.
+- `app/scheduler.py` - APScheduler subscription expiry job.
 - `app/states.py` - FSM (stub).
-- `requirements.txt` - pinned runtime deps.
+- `tests/` - pytest suite.
+- `requirements.txt` - pinned runtime deps (incl. `apscheduler`).
 - `Dockerfile` / `docker-compose.yml` - image and VPS run.
 - `.github/workflows/deploy.yml` - build/push GHCR + SSH compose deploy.
 - `data/` - local/runtime SQLite (not committed).
@@ -113,11 +123,12 @@ Typical paths:
 
 - Telegram update → Dispatcher middleware → handler (`session` injected).
 - Persistence → SQLAlchemy `AsyncSession` → SQLite file under `data/`.
+- Background → `AsyncIOScheduler` → `check_subscriptions` (own session) → `Bot.send_message` / `User.is_active`.
 
-Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; multi-step dialogs in `states.py`. Do not put business logic only inside `main.py`.
+Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; multi-step dialogs in `states.py`; expiry in `scheduler.py`. Do not put business logic only inside `main.py`.
 
 ## Tests
-No automated test suite yet. When adding critical flows (registration, subscription gates), add pytest + aiogram testing helpers and keep them runnable by the agent from this repo root.
+Run `pytest` from this repo root. Current coverage focuses on subscription expiry windows, delivery resilience, and production scheduler defaults (`EXPIRY_WINDOW_UNIT == "day"`, daily Moscow cron). Extend the suite when adding registration gates or FSM.
 
 ## Deploy
 - CI: push to `main` (or `workflow_dispatch`) → build/push `ghcr.io/<github.repository>:latest` → SSH to VPS.

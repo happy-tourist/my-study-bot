@@ -19,7 +19,7 @@ from app.scheduler import (
 # Фиксированная «сейчас» для детерминированных окон UTC-дней
 NOW = datetime(2026, 9, 12, 12, 0, 0)
 
-# Production day semantics — harness default is minute (D8)
+# Production day semantics (SC-EXP-T04); minute unit only via explicit unit= for harness tests
 DAY = "day"
 
 
@@ -196,3 +196,16 @@ async def test_failed_delivery_does_not_abort_sc_exp_06(session_factory):
     assert user1.is_active is False
     assert user2.is_active is False
     assert user3.is_active is True
+
+
+def test_production_defaults_sc_exp_t04():
+    """SC-EXP-T04: day windows + daily Moscow cron; no every-minute schedule."""
+    import inspect
+
+    from app.scheduler import EXPIRY_WINDOW_UNIT, start_scheduler
+
+    assert EXPIRY_WINDOW_UNIT == "day"
+    src = inspect.getsource(start_scheduler)
+    assert 'minute="*"' not in src
+    assert "hour=10" in src
+    assert "minute=0" in src
