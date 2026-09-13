@@ -21,10 +21,10 @@ scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
 _REMIND_NS = (3, 2, 1)
 
-# Production default: day windows + daily cron (Europe/Moscow 10:00).
-# Minute unit remains available for parameterized tests / temporary harness.
+# Temporary harness (OpenSpec add-subscription-tariffs-trial D6): minute windows
+# + every-minute cron. Restore day + Europe/Moscow 10:00 with ЮKassa later.
 ExpiryWindowUnit = Literal["day", "minute"]
-EXPIRY_WINDOW_UNIT: ExpiryWindowUnit = "day"
+EXPIRY_WINDOW_UNIT: ExpiryWindowUnit = "minute"
 
 
 def _reminder_text(n: int, *, unit: ExpiryWindowUnit | None = None) -> str:
@@ -136,12 +136,11 @@ async def check_subscriptions(
 
 
 def start_scheduler(bot: Bot) -> None:
-    """Регистрирует ежедневный job (10:00 Europe/Moscow) и запускает планировщик."""
+    """Регистрирует minutely job и запускает планировщик (временный harness)."""
     scheduler.add_job(
         check_subscriptions,
         trigger="cron",
-        hour=10,
-        minute=0,
+        minute="*",
         args=[bot],
         id="check_subscriptions",
         replace_existing=True,

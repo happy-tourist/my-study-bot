@@ -16,3 +16,9 @@ async def engine():
 @pytest_asyncio.fixture
 async def session_factory(engine):
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest_asyncio.fixture
+async def session(session_factory):
+    async with session_factory() as session:
+        yield session

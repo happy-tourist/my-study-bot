@@ -8,11 +8,12 @@ Skills and OpenSpec live in **my-study-bot-meta**, not in this package. Before c
 This repository is the bot-only package. Shared specs, skills, and docs belong in the sibling [`../my-study-bot-meta`](../my-study-bot-meta).
 
 ## What It Is Used For
-Main scenarios (target product; handlers are still a thin scaffold):
+Main scenarios (target product; study **content** still stubby):
 
-- `/start` — upsert Telegram user into SQLite, greet (first visit vs return), and show an inline topic menu (Cars / Houses / Subscription stubs).
-- Persist basic user fields (Telegram id, username, subscription end, active flag).
-- (Planned) real study flows, FSM forms, subscription checks — extend `app/handlers.py`, `app/states.py`, `app/keyboards.py`.
+- `/start` — upsert Telegram user into SQLite; first visit grants one-time trial (`trial_used`, 3 min / «3 дня»); greet + inline topic menu.
+- Persist user fields (Telegram id, username, `subscription_end`, `is_active`, `trial_used`).
+- «Подписка» — tariffs catalog (grant without payment); Cars/Houses gated via `has_active_subscription` (`app/auth.py`).
+- (Planned) real study lesson flows / FSM forms — extend `app/handlers.py`, `app/states.py`, `app/keyboards.py`.
 
 ## Who The Users Are
 Direct users in Telegram:
@@ -31,13 +32,13 @@ Deploy target: VPS under `/home/deploy/my-study-bot`, Docker Compose + image fro
 ### Current vs intended product
 | Expectation | Today |
 |-------------|--------|
-| Register user on `/start` | Implemented (`User` upsert + greet + inline topic menu) |
-| Subscription / study features | Schema + expiry scheduler; Subscription menu has temporary 1m/5m test grants; study handlers / paid gates still stubby |
-| Background expiry | `app/scheduler.py` — day windows, daily cron 10:00 Europe/Moscow; reminds 3/2/1 days, deactivates on expire |
-| FSM forms / keyboards | `app/keyboards.py` has `main_menu_kb` / `back_to_menu_kb`; `app/states.py` still a stub |
-| Modular routers | Single `app/handlers.py` router included from `main.py` |
+| Register user on `/start` | Implemented (`User` upsert + greet + inline topic menu); first visit grants one-time trial (`trial_used`, 3 min / «3 дня») |
+| Subscription / study features | Tariffs catalog in «Подписка» (grant without payment); Cars/Houses gated via `has_active_subscription`; study content still stubs |
+| Background expiry | `app/scheduler.py` — **temporary** minute windows + cron `minute="*"` (restore day + 10:00 MSK with ЮKassa); reminds 3/2/1, deactivates on expire |
+| FSM forms / keyboards | `app/keyboards.py` — topic menu, tariffs, subscription-required CTA; `app/states.py` still a stub |
+| Modular routers | Single `app/handlers.py` router included from `main.py`; gate helper in `app/auth.py` |
 | `.env.example` | Missing — document vars here; add example when convenient |
-| Automated tests | `tests/` — pytest + pytest-asyncio (`test_subscription_expiry.py`) |
+| Automated tests | `tests/` — pytest + pytest-asyncio (expiry, auth helper, trial/tariffs/gate handlers) |
 
 When adding study/subscription behavior, prefer extending the existing `User` model and middleware session injection rather than inventing a parallel data path. Expiry side effects stay in `app/scheduler.py`.
 
@@ -81,7 +82,8 @@ Do not commit secrets (`.env`, `.env.server` are gitignored).
 ## Database And Middleware
 - `app/database.py` — engine, `async_session`, `User` model, `init_db()`.
 - `app/middlewares.py` — `DbSessionMiddleware` injects `session: AsyncSession` into handler `data`.
-- `User` columns: `id` (Telegram BigInteger PK), `username`, `subscription_end`, `is_active`, `created_at`.
+- `app/auth.py` — `has_active_subscription` for gated topic sections.
+- `User` columns: `id` (Telegram BigInteger PK), `username`, `subscription_end`, `is_active`, `trial_used`, `created_at`.
 
 Handlers that need DB should declare `session: AsyncSession` and use the injected session (middleware opens/closes the session per update).
 
@@ -90,27 +92,31 @@ From `app/handlers.py` today:
 
 | Trigger | Behavior |
 |---------|----------|
-| `/start` | Create `User` if missing; greet; attach inline topic menu |
-| `menu:cars` / `menu:houses` / `menu:subscription` | Edit message to stub section + Back button |
+| `/start` | Create `User` if missing (one-time trial); greet; attach inline topic menu |
+| `menu:cars` / `menu:houses` | Gate via `has_active_subscription`; stub content or refuse + subscription CTA |
+| `menu:subscription` | Tariffs list (always open) |
+| `tariff:*` | Grant tariff minutes onto `subscription_end`; set `is_active=True` |
 | `menu:back` | Edit message back to section-choice + main menu |
 
-Builders / stubs:
+Builders / helpers:
 
-- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()` (namespaced `menu:*`).
+- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()`, `tariffs_kb()`, `subscription_required_kb()` (`menu:*` / `tariff:*`).
+- `app/auth.py` — `has_active_subscription`.
 - `app/states.py` — FSM states (stub).
-- `app/scheduler.py` — daily expiry reminders + deactivation (see Core Stack).
+- `app/scheduler.py` — temporary minute expiry reminders + deactivation (restore day + 10:00 MSK with ЮKassa).
 
 Keep Russian user-facing strings consistent with existing replies unless product copy is being redesigned.
 
 ## Combined Structure
 - `main.py` - process entry (Bot, Dispatcher, polling, platform-specific session, scheduler hooks).
 - `app/handlers.py` - routers / commands.
+- `app/auth.py` - subscription gate helper.
 - `app/database.py` - SQLAlchemy models + engine.
 - `app/middlewares.py` - DB session injection.
-- `app/keyboards.py` - inline topic-menu / subscription test builders.
+- `app/keyboards.py` - inline topic-menu / tariffs / gate CTA builders.
 - `app/scheduler.py` - APScheduler subscription expiry job.
 - `app/states.py` - FSM (stub).
-- `tests/` - pytest suite.
+- `tests/` - pytest suite (expiry, auth, trial/tariffs/gate).
 - `requirements.txt` - pinned runtime deps (incl. `apscheduler`).
 - `Dockerfile` / `docker-compose.yml` - image and VPS run.
 - `.github/workflows/deploy.yml` - build/push GHCR + SSH compose deploy.
@@ -119,14 +125,14 @@ Keep Russian user-facing strings consistent with existing replies unless product
 ## Layering
 Typical paths:
 
-- Telegram update → Dispatcher middleware → handler (`session` injected).
+- Telegram update → Dispatcher middleware → handler (`session` injected) → optional `app/auth.py` gate.
 - Persistence → SQLAlchemy `AsyncSession` → SQLite file under `data/`.
 - Background → `AsyncIOScheduler` → `check_subscriptions` (own session) → `Bot.send_message` / `User.is_active`.
 
-Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; multi-step dialogs in `states.py`; expiry in `scheduler.py`. Do not put business logic only inside `main.py`.
+Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; gate math in `auth.py`; multi-step dialogs in `states.py`; expiry in `scheduler.py`. Do not put business logic only inside `main.py`.
 
 ## Tests
-Run `pytest` from this repo root. Current coverage focuses on subscription expiry windows, delivery resilience, and production scheduler defaults (`EXPIRY_WINDOW_UNIT == "day"`, daily Moscow cron). Extend the suite when adding registration gates or FSM.
+Run `pytest` from this repo root. Coverage: subscription expiry (minute harness windows + delivery resilience), `has_active_subscription`, trial `/start`, tariffs grants, Cars/Houses gate. Assert **current** scheduler defaults (`EXPIRY_WINDOW_UNIT == "minute"`, minutely cron) until ЮKassa restores day + Moscow 10:00.
 
 ## Deploy
 - CI: push to `main` (or `workflow_dispatch`) → build/push `ghcr.io/<github.repository>:latest` → SSH to VPS.

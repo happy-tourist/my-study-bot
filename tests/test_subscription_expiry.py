@@ -1,4 +1,4 @@
-"""SC-EXP-01…SC-EXP-06: логика отбора и действий expiry (без Telegram/APScheduler)."""
+"""SC-EXP-01…SC-EXP-06, SC-EXP-T04: минутные окна expiry (без Telegram/APScheduler)."""
 
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ from app.scheduler import (
     classify_subscription_action,
 )
 
-# Фиксированная «сейчас» для детерминированных окон UTC-дней
+# Фиксированная «сейчас» для детерминированных окон UTC-минут
 NOW = datetime(2026, 9, 12, 12, 0, 0)
 
-# Production day semantics (SC-EXP-T04); minute unit only via explicit unit= for harness tests
-DAY = "day"
+# Temporary harness: minute windows (SC-EXP delta); day unit still available via unit=
+MINUTE = "minute"
 
 
 async def _seed_user(
@@ -52,34 +52,34 @@ async def _get_user(session_factory, user_id: int) -> User:
 
 
 @pytest.mark.parametrize(
-    ("days", "scenario"),
+    ("minutes", "scenario"),
     [
         (3, "SC-EXP-01"),
         (2, "SC-EXP-02"),
         (1, "SC-EXP-03"),
     ],
 )
-def test_classify_reminder_windows(days: int, scenario: str):
-    end = NOW + timedelta(days=days, hours=6)
+def test_classify_reminder_windows(minutes: int, scenario: str):
+    end = NOW + timedelta(minutes=minutes, seconds=30)
     assert classify_subscription_action(
-        is_active=True, subscription_end=end, now=NOW, unit=DAY
-    ) == f"remind_{days}", scenario
+        is_active=True, subscription_end=end, now=NOW, unit=MINUTE
+    ) == f"remind_{minutes}", scenario
 
 
 def test_classify_no_end_sc_exp_04():
     assert (
         classify_subscription_action(
-            is_active=True, subscription_end=None, now=NOW, unit=DAY
+            is_active=True, subscription_end=None, now=NOW, unit=MINUTE
         )
         is None
     )
 
 
 def test_classify_expired_sc_exp_05():
-    end = NOW - timedelta(hours=1)
+    end = NOW - timedelta(seconds=30)
     assert (
         classify_subscription_action(
-            is_active=True, subscription_end=end, now=NOW, unit=DAY
+            is_active=True, subscription_end=end, now=NOW, unit=MINUTE
         )
         == "expire"
     )
@@ -89,29 +89,29 @@ def test_classify_expired_sc_exp_05():
 
 
 @pytest.mark.parametrize(
-    ("days", "scenario"),
+    ("minutes", "scenario"),
     [
         (3, "SC-EXP-01"),
         (2, "SC-EXP-02"),
         (1, "SC-EXP-03"),
     ],
 )
-async def test_reminder_sent_for_window(session_factory, days: int, scenario: str):
-    user_id = 1000 + days
+async def test_reminder_sent_for_window(session_factory, minutes: int, scenario: str):
+    user_id = 1000 + minutes
     await _seed_user(
         session_factory,
         user_id=user_id,
-        subscription_end=NOW + timedelta(days=days, hours=6),
+        subscription_end=NOW + timedelta(minutes=minutes, seconds=30),
     )
     bot = AsyncMock()
     bot.send_message = AsyncMock()
 
     await check_subscriptions(
-        bot, session_factory=session_factory, now=NOW, unit=DAY
+        bot, session_factory=session_factory, now=NOW, unit=MINUTE
     )
 
     bot.send_message.assert_awaited_once_with(
-        user_id, _reminder_text(days, unit=DAY)
+        user_id, _reminder_text(minutes, unit=MINUTE)
     )
     user = await _get_user(session_factory, user_id)
     assert user.is_active is True, scenario
@@ -123,7 +123,7 @@ async def test_no_reminder_without_subscription_end_sc_exp_04(session_factory):
     bot.send_message = AsyncMock()
 
     await check_subscriptions(
-        bot, session_factory=session_factory, now=NOW, unit=DAY
+        bot, session_factory=session_factory, now=NOW, unit=MINUTE
     )
 
     bot.send_message.assert_not_awaited()
@@ -135,13 +135,13 @@ async def test_expired_deactivated_and_notified_sc_exp_05(session_factory):
     await _seed_user(
         session_factory,
         user_id=2005,
-        subscription_end=NOW - timedelta(hours=2),
+        subscription_end=NOW - timedelta(seconds=30),
     )
     bot = AsyncMock()
     bot.send_message = AsyncMock()
 
     await check_subscriptions(
-        bot, session_factory=session_factory, now=NOW, unit=DAY
+        bot, session_factory=session_factory, now=NOW, unit=MINUTE
     )
 
     bot.send_message.assert_awaited_once_with(2005, _EXPIRED_TEXT)
@@ -154,17 +154,17 @@ async def test_failed_delivery_does_not_abort_sc_exp_06(session_factory):
     await _seed_user(
         session_factory,
         user_id=3001,
-        subscription_end=NOW - timedelta(hours=1),
+        subscription_end=NOW - timedelta(seconds=30),
     )
     await _seed_user(
         session_factory,
         user_id=3002,
-        subscription_end=NOW - timedelta(hours=2),
+        subscription_end=NOW - timedelta(minutes=1),
     )
     await _seed_user(
         session_factory,
         user_id=3003,
-        subscription_end=NOW + timedelta(days=2, hours=3),
+        subscription_end=NOW + timedelta(minutes=2, seconds=30),
     )
 
     bot = AsyncMock()
@@ -177,12 +177,12 @@ async def test_failed_delivery_does_not_abort_sc_exp_06(session_factory):
     bot.send_message = AsyncMock(side_effect=send_side_effect)
 
     await check_subscriptions(
-        bot, session_factory=session_factory, now=NOW, unit=DAY
+        bot, session_factory=session_factory, now=NOW, unit=MINUTE
     )
 
-    # Напоминание N=2 всё равно ушло второму matching-пользователю
+    # Напоминание N=2 всё равно ушло matching-пользователю
     assert any(
-        call.args == (3003, _reminder_text(2, unit=DAY))
+        call.args == (3003, _reminder_text(2, unit=MINUTE))
         for call in bot.send_message.await_args_list
     )
     # Уведомление об истечении второму expired-пользователю тоже ушло
@@ -199,13 +199,19 @@ async def test_failed_delivery_does_not_abort_sc_exp_06(session_factory):
 
 
 def test_production_defaults_sc_exp_t04():
-    """SC-EXP-T04: day windows + daily Moscow cron; no every-minute schedule."""
+    """SC-EXP-T04: minute windows + minutely cron; no daily 10:00; no 1/5-min grants."""
     import inspect
 
+    from app import keyboards as kb
     from app.scheduler import EXPIRY_WINDOW_UNIT, start_scheduler
 
-    assert EXPIRY_WINDOW_UNIT == "day"
+    assert EXPIRY_WINDOW_UNIT == "minute"
     src = inspect.getsource(start_scheduler)
-    assert 'minute="*"' not in src
-    assert "hour=10" in src
-    assert "minute=0" in src
+    assert 'minute="*"' in src
+    assert "hour=10" not in src
+
+    # Temporary one-/five-minute-only grant buttons must not be in tariffs
+    assert set(kb.TARIFFS) == {"1_month", "3_months", "forever"}
+    assert {t["minutes"] for t in kb.TARIFFS.values()} == {30, 90, 36500}
+    assert 1 not in {t["minutes"] for t in kb.TARIFFS.values()}
+    assert 5 not in {t["minutes"] for t in kb.TARIFFS.values()}
