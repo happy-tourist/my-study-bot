@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from dotenv import load_dotenv
 
 from app.handlers import router
+from app.handlers_admin import router as admin_router
 from app.database import init_db
 from app.middlewares import DbSessionMiddleware
 from app.scheduler import start_scheduler, stop_scheduler
@@ -39,6 +40,7 @@ async def main():
     await init_db()
 
     dp.include_router(router)
+    dp.include_router(admin_router)
     dp.startup.register(startup)
     dp.shutdown.register(shutdown)
     await dp.start_polling(bot)

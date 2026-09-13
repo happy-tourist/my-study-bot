@@ -36,11 +36,23 @@ async def test_ensure_adds_trial_used_to_legacy_users_table():
             for row in (await conn.execute(text("PRAGMA table_info(users)"))).fetchall()
         }
         assert "trial_used" in cols
+        assert "is_admin" in cols
+        assert "is_banned" in cols
 
         trial = (
             await conn.execute(text("SELECT trial_used FROM users WHERE id = 1"))
         ).scalar_one()
         assert trial in (0, False)
+
+        is_admin = (
+            await conn.execute(text("SELECT is_admin FROM users WHERE id = 1"))
+        ).scalar_one()
+        assert is_admin in (0, False)
+
+        is_banned = (
+            await conn.execute(text("SELECT is_banned FROM users WHERE id = 1"))
+        ).scalar_one()
+        assert is_banned in (0, False)
 
         # Second run is idempotent (no duplicate-column error).
         await conn.run_sync(_ensure_sqlite_user_columns)

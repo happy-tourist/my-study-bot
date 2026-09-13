@@ -16,6 +16,8 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 # SQLite create_all не добавляет колонки к существующим таблицам — догоняем при старте.
 _SQLITE_USER_COLUMN_DDL: dict[str, str] = {
     "trial_used": "ALTER TABLE users ADD COLUMN trial_used BOOLEAN DEFAULT 0 NOT NULL",
+    "is_admin": "ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0 NOT NULL",
+    "is_banned": "ALTER TABLE users ADD COLUMN is_banned BOOLEAN DEFAULT 0 NOT NULL",
 }
 
 
@@ -31,6 +33,8 @@ class User(Base):
     subscription_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

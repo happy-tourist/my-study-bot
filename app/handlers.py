@@ -3,18 +3,25 @@ import app.keyboards as kb
 from datetime import datetime, timedelta
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
 from aiogram.filters import CommandStart
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import has_active_subscription
+from app.auth import (
+    extend_subscription,
+    has_active_subscription,
+    is_admin_user,
+    is_banned_user,
+)
 from app.database import User
 
 
 router = Router()
 
 TRIAL_MINUTES = 3
+
+_ACCESS_CLOSED_TEXT = "Доступ закрыт."
 
 _SUBSCRIPTION_REQUIRED_TEXT = (
     "Доступ к разделу требует активной подписки.\n"
@@ -27,12 +34,21 @@ async def _load_user(session: AsyncSession, user_id: int) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def _refuse_access_closed(callback: CallbackQuery) -> None:
+    await callback.message.edit_text(_ACCESS_CLOSED_TEXT)
+    await callback.answer()
+
+
 async def _refuse_without_subscription(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
         _SUBSCRIPTION_REQUIRED_TEXT,
         reply_markup=kb.subscription_required_kb(),
     )
     await callback.answer()
+
+
+def _menu_markup(user: User | None, *, telegram_id: int) -> InlineKeyboardMarkup:
+    return kb.main_menu_kb(show_admin=is_admin_user(user, telegram_id=telegram_id))
 
 
 @router.message(CommandStart())
@@ -54,18 +70,26 @@ async def cmd_start(message: Message, session: AsyncSession):
             "Привет! Я тебя запомнил 👋\n\n"
             "Тебе активирован пробный период на 3 дня (3 мин).\n\n"
             "Выбери раздел:",
-            reply_markup=kb.main_menu_kb(),
+            reply_markup=_menu_markup(user, telegram_id=user_id),
         )
-    else:
-        await message.answer(
-            f"С возвращением, {message.from_user.first_name}!\n\nВыбери раздел:",
-            reply_markup=kb.main_menu_kb(),
-        )
+        return
+
+    if is_banned_user(user):
+        await message.answer(_ACCESS_CLOSED_TEXT)
+        return
+
+    await message.answer(
+        f"С возвращением, {message.from_user.first_name}!\n\nВыбери раздел:",
+        reply_markup=_menu_markup(user, telegram_id=user_id),
+    )
 
 
 @router.callback_query(F.data == kb.MENU_CARS)
 async def menu_cars(callback: CallbackQuery, session: AsyncSession):
     user = await _load_user(session, callback.from_user.id)
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
     if not has_active_subscription(user):
         await _refuse_without_subscription(callback)
         return
@@ -80,6 +104,9 @@ async def menu_cars(callback: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data == kb.MENU_HOUSES)
 async def menu_houses(callback: CallbackQuery, session: AsyncSession):
     user = await _load_user(session, callback.from_user.id)
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
     if not has_active_subscription(user):
         await _refuse_without_subscription(callback)
         return
@@ -94,6 +121,9 @@ async def menu_houses(callback: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data == kb.MENU_SUBSCRIPTION)
 async def menu_subscription(callback: CallbackQuery, session: AsyncSession):
     user = await _load_user(session, callback.from_user.id)
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
     show_trial = user is not None and not user.trial_used
     await callback.message.edit_text(
         "Выбери тариф подписки:",
@@ -108,6 +138,9 @@ async def claim_trial(callback: CallbackQuery, session: AsyncSession):
     if user is None:
         await callback.answer("Сначала нажми /start", show_alert=True)
         return
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
     if user.trial_used:
         await callback.answer("Пробный период уже использован", show_alert=True)
         return
@@ -120,7 +153,7 @@ async def claim_trial(callback: CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(
         "Тебе активирован пробный период на 3 дня (3 мин).\n\n"
         "Выбери раздел:",
-        reply_markup=kb.main_menu_kb(),
+        reply_markup=_menu_markup(user, telegram_id=callback.from_user.id),
     )
     await callback.answer()
 
@@ -137,15 +170,11 @@ async def tariff_grant(callback: CallbackQuery, session: AsyncSession):
     if user is None:
         await callback.answer("Сначала нажми /start", show_alert=True)
         return
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
 
-    now = datetime.utcnow()
-    if user.subscription_end is not None and user.subscription_end > now:
-        base = user.subscription_end
-    else:
-        base = now
-
-    user.subscription_end = base + timedelta(minutes=tariff["minutes"])
-    user.is_active = True
+    extend_subscription(user, tariff["minutes"])
     await session.commit()
 
     await callback.message.edit_text(
@@ -157,9 +186,13 @@ async def tariff_grant(callback: CallbackQuery, session: AsyncSession):
 
 
 @router.callback_query(F.data == kb.MENU_BACK)
-async def menu_back(callback: CallbackQuery):
+async def menu_back(callback: CallbackQuery, session: AsyncSession):
+    user = await _load_user(session, callback.from_user.id)
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
     await callback.message.edit_text(
         "Выбери раздел:",
-        reply_markup=kb.main_menu_kb(),
+        reply_markup=_menu_markup(user, telegram_id=callback.from_user.id),
     )
     await callback.answer()

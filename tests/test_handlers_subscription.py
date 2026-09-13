@@ -1,4 +1,4 @@
-"""SC-START-01…03, SC-TAR-01…05, SC-GATE-01…04, SC-MENU-01…04: trial, tariffs, gate."""
+"""SC-START-01…06, SC-TAR-01…05, SC-GATE-01…05, SC-MENU-01…05: trial, tariffs, gate, admin menu, ban."""
 
 from __future__ import annotations
 
@@ -59,6 +59,8 @@ async def _seed_user(
     trial_used: bool = False,
     is_active: bool = False,
     subscription_end: datetime | None = None,
+    is_admin: bool = False,
+    is_banned: bool = False,
 ) -> User:
     user = User(
         id=user_id,
@@ -66,6 +68,8 @@ async def _seed_user(
         trial_used=trial_used,
         is_active=is_active,
         subscription_end=subscription_end,
+        is_admin=is_admin,
+        is_banned=is_banned,
     )
     session.add(user)
     await session.commit()
@@ -353,8 +357,9 @@ async def test_subscription_open_without_gate_sc_menu_03(session: AsyncSession):
 
 
 async def test_back_to_main_menu_sc_menu_04(session: AsyncSession):
+    await _seed_user(session, user_id=305, trial_used=True)
     callback = _make_callback(user_id=305, data=kb.MENU_BACK)
-    await menu_back(callback)
+    await menu_back(callback, session)
 
     text = callback.message.edit_text.await_args.args[0]
     assert text == "Выбери раздел:"
@@ -364,3 +369,93 @@ async def test_back_to_main_menu_sc_menu_04(session: AsyncSession):
     assert any("Дома" in t for t in labels)
     assert any("Подписка" in t for t in labels)
     callback.answer.assert_awaited_once()
+
+
+# --- Admin menu + ban gate (SC-START-05/06, SC-MENU-05, SC-GATE-05) ---
+
+
+async def test_admin_sees_admin_on_start_sc_start_05(
+    session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("ADMIN_IDS", "")
+    await _seed_user(session, user_id=401, trial_used=True, is_admin=True)
+
+    message = _make_message(user_id=401, first_name="Admin")
+    await cmd_start(message, session)
+
+    markup = message.answer.await_args.kwargs["reply_markup"]
+    labels = [btn.text for row in markup.inline_keyboard for btn in row]
+    assert any("Машины" in t for t in labels)
+    assert any("Дома" in t for t in labels)
+    assert any("Подписка" in t for t in labels)
+    assert any("Админ" in t for t in labels)
+
+
+async def test_banned_start_access_closed_sc_start_06(session: AsyncSession):
+    await _seed_user(session, user_id=402, trial_used=True, is_banned=True)
+
+    message = _make_message(user_id=402, first_name="Banned")
+    await cmd_start(message, session)
+
+    assert message.answer.await_args.args[0] == "Доступ закрыт."
+    assert message.answer.await_args.kwargs.get("reply_markup") is None
+    assert await _count_users(session) == 1
+
+
+async def test_admin_back_menu_shows_admin_sc_menu_05(
+    session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("ADMIN_IDS", "")
+    await _seed_user(session, user_id=403, trial_used=True, is_admin=True)
+
+    callback = _make_callback(user_id=403, data=kb.MENU_BACK)
+    await menu_back(callback, session)
+
+    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    labels = [btn.text for row in markup.inline_keyboard for btn in row]
+    assert any("Админ" in t for t in labels)
+    callback.answer.assert_awaited_once()
+
+
+async def test_banned_refused_cars_sc_gate_05(session: AsyncSession, monkeypatch):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=404,
+        trial_used=True,
+        is_banned=True,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    callback = _make_callback(user_id=404, data=kb.MENU_CARS)
+    await menu_cars(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == "Доступ закрыт."
+    assert "Машины" not in text
+    assert _SUBSCRIPTION_REQUIRED_TEXT not in text
+    callback.answer.assert_awaited_once()
+
+
+async def test_banned_refused_houses_and_subscription(session: AsyncSession, monkeypatch):
+    """Ban overrides Houses stub and always-open Subscription (gate requirement)."""
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=405,
+        trial_used=True,
+        is_banned=True,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    houses = _make_callback(user_id=405, data=kb.MENU_HOUSES)
+    await menu_houses(houses, session)
+    assert houses.message.edit_text.await_args.args[0] == "Доступ закрыт."
+    houses.answer.assert_awaited_once()
+
+    sub = _make_callback(user_id=405, data=kb.MENU_SUBSCRIPTION)
+    await menu_subscription(sub, session)
+    assert sub.message.edit_text.await_args.args[0] == "Доступ закрыт."
+    sub.answer.assert_awaited_once()

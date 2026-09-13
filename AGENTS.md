@@ -11,16 +11,18 @@ This repository is the bot-only package. Shared specs, skills, and docs belong i
 Main scenarios (target product; study **content** still stubby):
 
 - `/start` — upsert Telegram user into SQLite; first visit grants one-time trial (`trial_used`, 3 min / «3 дня»); greet + inline topic menu.
-- Persist user fields (Telegram id, username, `subscription_end`, `is_active`, `trial_used`).
+- Persist user fields (Telegram id, username, `subscription_end`, `is_active`, `trial_used`, `is_admin`, `is_banned`).
 - «Подписка» — tariffs catalog (grant without payment); one-time «Получить пробный период» when `trial_used` is False; Cars/Houses gated via `has_active_subscription` (`app/auth.py`).
+- `/admin` + кнопка «Админ» — операторская панель (статистика, списки, поиск, ban/unban, роли, grant/revoke тарифов) для bootstrap `ADMIN_IDS` и `User.is_admin`.
 - (Planned) real study lesson flows / FSM forms — extend `app/handlers.py`, `app/states.py`, `app/keyboards.py`.
 
 ## Who The Users Are
 Direct users in Telegram:
 
 - Learners interacting with the bot (registered on first `/start`).
+- Operators (bootstrap `ADMIN_IDS` and/or `User.is_admin`) using `/admin` inside Telegram.
 
-There is no separate admin API or web UI in this package.
+There is no separate admin HTTP API or web UI in this package — admin UX is Telegram-only.
 
 ## Important
 This is a Telegram long-polling bot, not an HTTP API server. Authoritative user/subscription data lives in SQLite (`data/db.sqlite3` by default); handlers receive a DB session via middleware.
@@ -35,8 +37,8 @@ Deploy target: VPS under `/home/deploy/my-study-bot`, Docker Compose + image fro
 | Register user on `/start` | Implemented (`User` upsert + greet + inline topic menu); first visit grants one-time trial (`trial_used`, 3 min / «3 дня») |
 | Subscription / study features | Tariffs catalog in «Подписка» (grant without payment); Cars/Houses gated via `has_active_subscription`; study content still stubs |
 | Background expiry | `app/scheduler.py` — **temporary** minute windows + cron `minute="*"` (restore day + 10:00 MSK with ЮKassa); reminds 3/2/1, deactivates on expire |
-| FSM forms / keyboards | `app/keyboards.py` — topic menu, tariffs, subscription-required CTA; `app/states.py` still a stub |
-| Modular routers | Single `app/handlers.py` router included from `main.py`; gate helper in `app/auth.py` |
+| FSM forms / keyboards | `app/keyboards.py` — topic menu, tariffs, gate CTA, admin panel builders; `app/states.py` — `AdminSearchForm` for admin search |
+| Modular routers | Learner `app/handlers.py` + admin `app/handlers_admin.py`, both included from `main.py`; gate/admin helpers in `app/auth.py` |
 | `.env.example` | Missing — document vars here; add example when convenient |
 | Automated tests | `tests/` — pytest + pytest-asyncio (expiry, auth helper, trial/tariffs/gate handlers) |
 
@@ -74,6 +76,7 @@ No committed `.env.example` yet. Relevant variables (see local `.env` / server `
 |----------|------|
 | `TG_TOKEN` | Telegram Bot API token (required) |
 | `DB_URL` | SQLAlchemy async URL (default `sqlite+aiosqlite:///data/db.sqlite3`) |
+| `ADMIN_IDS` | CSV of bootstrap Telegram user ids that are always admins (e.g. `463353358`); OR with `User.is_admin` |
 
 `data/` is gitignored and mounted as a volume in Compose (`./data:/app/data`) so SQLite survives container restarts and deploys. Schema column adds are applied at startup via `_SQLITE_USER_COLUMN_DDL` — push does not reset the DB.
 
@@ -82,8 +85,8 @@ Do not commit secrets (`.env`, `.env.server` are gitignored).
 ## Database And Middleware
 - `app/database.py` — engine, `async_session`, `User` model, `init_db()`, `_SQLITE_USER_COLUMN_DDL` / `_ensure_sqlite_user_columns`.
 - `app/middlewares.py` — `DbSessionMiddleware` injects `session: AsyncSession` into handler `data`.
-- `app/auth.py` — `has_active_subscription` for gated topic sections.
-- `User` columns: `id` (Telegram BigInteger PK), `username`, `subscription_end`, `is_active`, `trial_used`, `created_at`.
+- `app/auth.py` — `has_active_subscription`, `is_admin_user` / `is_banned_user`, `parse_admin_ids` (`ADMIN_IDS`).
+- `User` columns: `id` (Telegram BigInteger PK), `username`, `subscription_end`, `is_active`, `trial_used`, `is_admin`, `is_banned`, `created_at`.
 
 Handlers that need DB should declare `session: AsyncSession` and use the injected session (middleware opens/closes the session per update).
 
@@ -94,31 +97,34 @@ From `app/handlers.py` today:
 
 | Trigger | Behavior |
 |---------|----------|
-| `/start` | Create `User` if missing (one-time trial); greet; attach inline topic menu |
-| `menu:cars` / `menu:houses` | Gate via `has_active_subscription`; stub content or refuse + subscription CTA |
-| `menu:subscription` | Tariffs list (always open) |
-| `tariff:*` | Grant tariff minutes onto `subscription_end`; set `is_active=True` |
-| `menu:back` | Edit message back to section-choice + main menu |
+| `/start` | Create `User` if missing (one-time trial); greet; attach inline topic menu (Admin button when admin); banned → «Доступ закрыт.» |
+| `menu:cars` / `menu:houses` | Ban check first; then gate via `has_active_subscription`; stub content or refuse + subscription CTA |
+| `menu:subscription` | Tariffs list (ban → access closed; otherwise always open) |
+| `tariff:*` / `trial:claim` | Ban check; grant tariff minutes / one-time trial onto `subscription_end` |
+| `menu:back` | Edit message back to section-choice + main menu (Admin if admin) |
+| `/admin` / `menu:admin` | Admin panel (`app/handlers_admin.py`); non-admin → «Доступ закрыт.» |
 
 Builders / helpers:
 
-- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()`, `tariffs_kb()`, `subscription_required_kb()` (`menu:*` / `tariff:*`).
-- `app/auth.py` — `has_active_subscription`.
-- `app/states.py` — FSM states (stub).
+- `app/keyboards.py` — `main_menu_kb(show_admin=…)`, `back_to_menu_kb()`, `tariffs_kb()`, `subscription_required_kb()`, admin builders (`admin:*`).
+- `app/auth.py` — `has_active_subscription`, `is_admin_user` / `is_banned_user`, `extend_subscription`, promote/demote/ban guards.
+- `app/states.py` — `AdminSearchForm` (admin user search).
+- `app/handlers_admin.py` — admin panel Router (`/admin`, stats, lists, search, card mutations).
 - `app/scheduler.py` — temporary minute expiry reminders + deactivation (restore day + 10:00 MSK with ЮKassa).
 
 Keep Russian user-facing strings consistent with existing replies unless product copy is being redesigned.
 
 ## Combined Structure
 - `main.py` - process entry (Bot, Dispatcher, polling, platform-specific session, scheduler hooks).
-- `app/handlers.py` - routers / commands.
-- `app/auth.py` - subscription gate helper.
+- `app/handlers.py` - learner routers / commands.
+- `app/handlers_admin.py` - admin panel router.
+- `app/auth.py` - subscription gate + admin/ban helpers.
 - `app/database.py` - SQLAlchemy models + engine.
 - `app/middlewares.py` - DB session injection.
-- `app/keyboards.py` - inline topic-menu / tariffs / gate CTA builders.
+- `app/keyboards.py` - inline topic-menu / tariffs / gate CTA / admin builders.
 - `app/scheduler.py` - APScheduler subscription expiry job.
-- `app/states.py` - FSM (stub).
-- `tests/` - pytest suite (expiry, auth, trial/tariffs/gate).
+- `app/states.py` - FSM (`AdminSearchForm`).
+- `tests/` - pytest suite (expiry, auth, trial/tariffs/gate, admin panel).
 - `requirements.txt` - pinned runtime deps (incl. `apscheduler`).
 - `Dockerfile` / `docker-compose.yml` - image and VPS run.
 - `.github/workflows/deploy.yml` - build/push GHCR + SSH compose deploy.
