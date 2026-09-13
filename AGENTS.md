@@ -62,7 +62,7 @@ Application entry: `main.py` → `asyncio.run(main())` → `dp.start_polling(bot
 1. `load_dotenv()` in `main.py`.
 2. Build `Bot` (Windows: custom `AiohttpSession` SSL/IPv4; else default session).
 3. `Dispatcher` + `DbSessionMiddleware` on updates.
-4. `await init_db()` — `Base.metadata.create_all` if tables missing.
+4. `await init_db()` — `create_all` + `_ensure_sqlite_user_columns` (missing columns from `_SQLITE_USER_COLUMN_DDL`; volume not wiped on deploy).
 5. `dp.include_router(router)` from `app.handlers`.
 6. Register `startup` / `shutdown` hooks — `start_scheduler(bot)` / `stop_scheduler()`.
 7. `start_polling`.
@@ -75,17 +75,19 @@ No committed `.env.example` yet. Relevant variables (see local `.env` / server `
 | `TG_TOKEN` | Telegram Bot API token (required) |
 | `DB_URL` | SQLAlchemy async URL (default `sqlite+aiosqlite:///data/db.sqlite3`) |
 
-`data/` is gitignored and mounted as a volume in Compose (`./data:/app/data`) so SQLite survives container restarts.
+`data/` is gitignored and mounted as a volume in Compose (`./data:/app/data`) so SQLite survives container restarts and deploys. Schema column adds are applied at startup via `_SQLITE_USER_COLUMN_DDL` — push does not reset the DB.
 
 Do not commit secrets (`.env`, `.env.server` are gitignored).
 
 ## Database And Middleware
-- `app/database.py` — engine, `async_session`, `User` model, `init_db()`.
+- `app/database.py` — engine, `async_session`, `User` model, `init_db()`, `_SQLITE_USER_COLUMN_DDL` / `_ensure_sqlite_user_columns`.
 - `app/middlewares.py` — `DbSessionMiddleware` injects `session: AsyncSession` into handler `data`.
 - `app/auth.py` — `has_active_subscription` for gated topic sections.
 - `User` columns: `id` (Telegram BigInteger PK), `username`, `subscription_end`, `is_active`, `trial_used`, `created_at`.
 
 Handlers that need DB should declare `session: AsyncSession` and use the injected session (middleware opens/closes the session per update).
+
+When adding a new `User` column: update the model **and** register DDL in `_SQLITE_USER_COLUMN_DDL`; cover with `tests/test_database_schema.py`-style ensure test.
 
 ## Handlers And UX Surface
 From `app/handlers.py` today:
