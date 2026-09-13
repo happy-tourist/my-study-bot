@@ -34,7 +34,7 @@ Deploy target: VPS under `/home/deploy/my-study-bot`, Docker Compose + image fro
 | Register user on `/start` | Implemented (`User` upsert + greet + inline topic menu) |
 | Subscription / study features | Schema + expiry scheduler; Subscription menu has temporary 1m/5m test grants; study handlers / paid gates still stubby |
 | Background expiry | `app/scheduler.py` — day windows, daily cron 10:00 Europe/Moscow; reminds 3/2/1 days, deactivates on expire |
-| FSM forms / keyboards | `app/keyboards.py` has `main_menu_kb` / `back_to_menu_kb` / `subscription_kb`; `app/states.py` still a stub |
+| FSM forms / keyboards | `app/keyboards.py` has `main_menu_kb` / `back_to_menu_kb`; `app/states.py` still a stub |
 | Modular routers | Single `app/handlers.py` router included from `main.py` |
 | `.env.example` | Missing — document vars here; add example when convenient |
 | Automated tests | `tests/` — pytest + pytest-asyncio (`test_subscription_expiry.py`) |
@@ -91,14 +91,12 @@ From `app/handlers.py` today:
 | Trigger | Behavior |
 |---------|----------|
 | `/start` | Create `User` if missing; greet; attach inline topic menu |
-| `menu:cars` / `menu:houses` | Edit message to stub section + Back button |
-| `menu:subscription` | Subscription section + temporary test-grant keyboard |
-| `sub:test:1m` / `sub:test:5m` | Set `subscription_end` (+1 / +5 minutes), `is_active=True` |
+| `menu:cars` / `menu:houses` / `menu:subscription` | Edit message to stub section + Back button |
 | `menu:back` | Edit message back to section-choice + main menu |
 
 Builders / stubs:
 
-- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()`, `subscription_kb()` (namespaced `menu:*` / `sub:test:*`).
+- `app/keyboards.py` — `main_menu_kb()`, `back_to_menu_kb()` (namespaced `menu:*`).
 - `app/states.py` — FSM states (stub).
 - `app/scheduler.py` — daily expiry reminders + deactivation (see Core Stack).
 
