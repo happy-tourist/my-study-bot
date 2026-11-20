@@ -39,24 +39,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" | base64 -d > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
+          key_path: /home/runner/.ssh/deploy_key
           script: |
             set -e
             cd /home/deploy/my-study-bot
 
-            # Логин в GHCR (чтобы скачать приватный образ)
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Скачиваем свежий образ
             docker compose pull
-
-            # Перезапускаем контейнер
             docker compose up -d
-
-            # Убираем старые образы
             docker image prune -f
