@@ -51,6 +51,25 @@ def _menu_markup(user: User | None, *, telegram_id: int) -> InlineKeyboardMarkup
     return kb.main_menu_kb(show_admin=is_admin_user(user, telegram_id=telegram_id))
 
 
+async def _open_gated_topic_stub(
+    callback: CallbackQuery, session: AsyncSession, *, section: str
+) -> None:
+    """Ban → subscription gate → topic stub (Cars/Houses/Computers)."""
+    user = await _load_user(session, callback.from_user.id)
+    if is_banned_user(user):
+        await _refuse_access_closed(callback)
+        return
+    if not has_active_subscription(user):
+        await _refuse_without_subscription(callback)
+        return
+
+    await callback.message.edit_text(
+        f"Раздел «{section}»\nЗдесь будет контент.",
+        reply_markup=kb.back_to_menu_kb(),
+    )
+    await callback.answer()
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, session: AsyncSession):
     user_id = message.from_user.id
@@ -86,36 +105,17 @@ async def cmd_start(message: Message, session: AsyncSession):
 
 @router.callback_query(F.data == kb.MENU_CARS)
 async def menu_cars(callback: CallbackQuery, session: AsyncSession):
-    user = await _load_user(session, callback.from_user.id)
-    if is_banned_user(user):
-        await _refuse_access_closed(callback)
-        return
-    if not has_active_subscription(user):
-        await _refuse_without_subscription(callback)
-        return
-
-    await callback.message.edit_text(
-        "Раздел «Машины»\nЗдесь будет контент.",
-        reply_markup=kb.back_to_menu_kb(),
-    )
-    await callback.answer()
+    await _open_gated_topic_stub(callback, session, section="Машины")
 
 
 @router.callback_query(F.data == kb.MENU_HOUSES)
 async def menu_houses(callback: CallbackQuery, session: AsyncSession):
-    user = await _load_user(session, callback.from_user.id)
-    if is_banned_user(user):
-        await _refuse_access_closed(callback)
-        return
-    if not has_active_subscription(user):
-        await _refuse_without_subscription(callback)
-        return
+    await _open_gated_topic_stub(callback, session, section="Дома")
 
-    await callback.message.edit_text(
-        "Раздел «Дома»\nЗдесь будет контент.",
-        reply_markup=kb.back_to_menu_kb(),
-    )
-    await callback.answer()
+
+@router.callback_query(F.data == kb.MENU_COMPUTERS)
+async def menu_computers(callback: CallbackQuery, session: AsyncSession):
+    await _open_gated_topic_stub(callback, session, section="Компьютеры")
 
 
 @router.callback_query(F.data == kb.MENU_SUBSCRIPTION)

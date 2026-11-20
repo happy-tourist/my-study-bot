@@ -1,4 +1,4 @@
-"""SC-START-01…06, SC-TAR-01…05, SC-GATE-01…05, SC-MENU-01…05: trial, tariffs, gate, admin menu, ban."""
+"""SC-START-01…06, SC-TAR-01…05, SC-GATE-01…08, SC-MENU-01…06: trial, tariffs, gate, admin menu, ban."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.handlers import (
     cmd_start,
     menu_back,
     menu_cars,
+    menu_computers,
     menu_houses,
     menu_subscription,
     tariff_grant,
@@ -81,7 +82,22 @@ async def _count_users(session: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+def _inline_labels(markup) -> list[str]:
+    return [btn.text for row in markup.inline_keyboard for btn in row]
+
+
+def _assert_main_topic_labels(markup) -> None:
+    """Canonical topic set on main_menu_kb (Cars/Houses/Computers + Subscription)."""
+    assert markup is not None
+    labels = _inline_labels(markup)
+    assert any("Машины" in t for t in labels)
+    assert any("Дома" in t for t in labels)
+    assert any("Компьютеры" in t for t in labels)
+    assert any("Подписка" in t for t in labels)
+
+
 # --- /start trial (SC-START-01…03) ---
+
 
 
 async def test_start_first_visit_grants_trial_sc_start_01(session: AsyncSession, monkeypatch):
@@ -101,7 +117,7 @@ async def test_start_first_visit_grants_trial_sc_start_01(session: AsyncSession,
     assert "Привет! Я тебя запомнил" in text
     assert "3 дня (3 мин)" in text
     assert "Выбери раздел:" in text
-    assert message.answer.await_args.kwargs["reply_markup"] is not None
+    _assert_main_topic_labels(message.answer.await_args.kwargs["reply_markup"])
 
 
 async def test_start_returning_no_new_trial_sc_start_02(session: AsyncSession):
@@ -127,6 +143,7 @@ async def test_start_returning_no_new_trial_sc_start_02(session: AsyncSession):
     assert "С возвращением, Bob!" in text
     assert "3 дня (3 мин)" not in text
     assert "Выбери раздел:" in text
+    _assert_main_topic_labels(message.answer.await_args.kwargs["reply_markup"])
 
 
 async def test_start_after_trial_expiry_no_reactivate_sc_start_03(session: AsyncSession):
@@ -271,7 +288,7 @@ async def test_tariff_stacks_onto_future_end_sc_tar_05(session: AsyncSession, mo
     callback.answer.assert_awaited_once()
 
 
-# --- Gate + menu (SC-GATE-01…04, SC-MENU-01…04) ---
+# --- Gate + menu (SC-GATE-01…04/06…08, SC-MENU-01…04/06) ---
 
 
 async def test_active_subscriber_opens_cars_sc_gate_01(session: AsyncSession, monkeypatch):
@@ -314,6 +331,29 @@ async def test_active_subscriber_opens_houses_sc_gate_02(session: AsyncSession, 
     callback.answer.assert_awaited_once()
 
 
+async def test_active_subscriber_opens_computers_sc_gate_06(
+    session: AsyncSession, monkeypatch
+):
+    """SC-GATE-06 / SC-MENU-06: active subscriber opens Computers stub."""
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=306,
+        trial_used=True,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    callback = _make_callback(user_id=306, data=kb.MENU_COMPUTERS)
+    await menu_computers(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == "Раздел «Компьютеры»\nЗдесь будет контент."
+    assert _SUBSCRIPTION_REQUIRED_TEXT not in text
+    assert callback.message.edit_text.await_args.kwargs["reply_markup"] is not None
+    callback.answer.assert_awaited_once()
+
+
 async def test_inactive_refused_cars_sc_gate_03(session: AsyncSession, monkeypatch):
     _freeze_utcnow(monkeypatch)
     await _seed_user(
@@ -333,6 +373,27 @@ async def test_inactive_refused_cars_sc_gate_03(session: AsyncSession, monkeypat
     markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
     labels = [btn.text for row in markup.inline_keyboard for btn in row]
     assert any("Подписка" in t for t in labels)
+    callback.answer.assert_awaited_once()
+
+
+async def test_inactive_refused_computers_sc_gate_07(session: AsyncSession, monkeypatch):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=307,
+        trial_used=True,
+        is_active=False,
+        subscription_end=NOW - timedelta(minutes=1),
+    )
+
+    callback = _make_callback(user_id=307, data=kb.MENU_COMPUTERS)
+    await menu_computers(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == _SUBSCRIPTION_REQUIRED_TEXT
+    assert "Раздел «Компьютеры»" not in text
+    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    assert any("Подписка" in t for t in _inline_labels(markup))
     callback.answer.assert_awaited_once()
 
 
@@ -363,15 +424,11 @@ async def test_back_to_main_menu_sc_menu_04(session: AsyncSession):
 
     text = callback.message.edit_text.await_args.args[0]
     assert text == "Выбери раздел:"
-    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
-    labels = [btn.text for row in markup.inline_keyboard for btn in row]
-    assert any("Машины" in t for t in labels)
-    assert any("Дома" in t for t in labels)
-    assert any("Подписка" in t for t in labels)
+    _assert_main_topic_labels(callback.message.edit_text.await_args.kwargs["reply_markup"])
     callback.answer.assert_awaited_once()
 
 
-# --- Admin menu + ban gate (SC-START-05/06, SC-MENU-05, SC-GATE-05) ---
+# --- Admin menu + ban gate (SC-START-05/06, SC-MENU-05, SC-GATE-05/08) ---
 
 
 async def test_admin_sees_admin_on_start_sc_start_05(
@@ -384,11 +441,8 @@ async def test_admin_sees_admin_on_start_sc_start_05(
     await cmd_start(message, session)
 
     markup = message.answer.await_args.kwargs["reply_markup"]
-    labels = [btn.text for row in markup.inline_keyboard for btn in row]
-    assert any("Машины" in t for t in labels)
-    assert any("Дома" in t for t in labels)
-    assert any("Подписка" in t for t in labels)
-    assert any("Админ" in t for t in labels)
+    _assert_main_topic_labels(markup)
+    assert any("Админ" in t for t in _inline_labels(markup))
 
 
 async def test_banned_start_access_closed_sc_start_06(session: AsyncSession):
@@ -434,6 +488,27 @@ async def test_banned_refused_cars_sc_gate_05(session: AsyncSession, monkeypatch
     text = callback.message.edit_text.await_args.args[0]
     assert text == "Доступ закрыт."
     assert "Машины" not in text
+    assert _SUBSCRIPTION_REQUIRED_TEXT not in text
+    callback.answer.assert_awaited_once()
+
+
+async def test_banned_refused_computers_sc_gate_08(session: AsyncSession, monkeypatch):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=406,
+        trial_used=True,
+        is_banned=True,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    callback = _make_callback(user_id=406, data=kb.MENU_COMPUTERS)
+    await menu_computers(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == "Доступ закрыт."
+    assert "Компьютеры" not in text
     assert _SUBSCRIPTION_REQUIRED_TEXT not in text
     callback.answer.assert_awaited_once()
 

@@ -12,7 +12,7 @@ Main scenarios (target product; study **content** still stubby):
 
 - `/start` — upsert Telegram user into SQLite; first visit grants one-time trial (`trial_used`, 3 min / «3 дня»); greet + inline topic menu.
 - Persist user fields (Telegram id, username, `subscription_end`, `is_active`, `trial_used`, `is_admin`, `is_banned`).
-- «Подписка» — tariffs catalog (grant without payment); one-time «Получить пробный период» when `trial_used` is False; Cars/Houses gated via `has_active_subscription` (`app/auth.py`).
+- «Подписка» — tariffs catalog (grant without payment); one-time «Получить пробный период» when `trial_used` is False; Cars/Houses/Computers gated via `has_active_subscription` (`app/auth.py`).
 - `/admin` + кнопка «Админ» — операторская панель (статистика, списки, поиск, ban/unban, роли, grant/revoke тарифов) для bootstrap `ADMIN_IDS` и `User.is_admin`.
 - (Planned) real study lesson flows / FSM forms — extend `app/handlers.py`, `app/states.py`, `app/keyboards.py`.
 
@@ -35,7 +35,7 @@ Deploy target: VPS under `/home/deploy/my-study-bot`, Docker Compose + image fro
 | Expectation | Today |
 |-------------|--------|
 | Register user on `/start` | Implemented (`User` upsert + greet + inline topic menu); first visit grants one-time trial (`trial_used`, 3 min / «3 дня») |
-| Subscription / study features | Tariffs catalog in «Подписка» (grant without payment); Cars/Houses gated via `has_active_subscription`; study content still stubs |
+| Subscription / study features | Tariffs catalog in «Подписка» (grant without payment); Cars/Houses/Computers gated via `has_active_subscription`; study content still stubs |
 | Background expiry | `app/scheduler.py` — **temporary** minute windows + cron `minute="*"` (restore day + 10:00 MSK with ЮKassa); reminds 3/2/1, deactivates on expire |
 | FSM forms / keyboards | `app/keyboards.py` — topic menu, tariffs, gate CTA, admin panel builders; `app/states.py` — `AdminSearchForm` for admin search |
 | Modular routers | Learner `app/handlers.py` + admin `app/handlers_admin.py`, both included from `main.py`; gate/admin helpers in `app/auth.py` |
@@ -98,7 +98,7 @@ From `app/handlers.py` today:
 | Trigger | Behavior |
 |---------|----------|
 | `/start` | Create `User` if missing (one-time trial); greet; attach inline topic menu (Admin button when admin); banned → «Доступ закрыт.» |
-| `menu:cars` / `menu:houses` | Ban check first; then gate via `has_active_subscription`; stub content or refuse + subscription CTA |
+| `menu:cars` / `menu:houses` / `menu:computers` | Ban check first; then gate via `has_active_subscription`; stub content or refuse + subscription CTA |
 | `menu:subscription` | Tariffs list (ban → access closed; otherwise always open) |
 | `tariff:*` / `trial:claim` | Ban check; grant tariff minutes / one-time trial onto `subscription_end` |
 | `menu:back` | Edit message back to section-choice + main menu (Admin if admin) |
@@ -140,7 +140,7 @@ Typical paths:
 Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; gate math in `auth.py`; multi-step dialogs in `states.py`; expiry in `scheduler.py`. Do not put business logic only inside `main.py`.
 
 ## Tests
-Run `pytest` from this repo root. Coverage: subscription expiry (minute harness windows + delivery resilience), `has_active_subscription`, trial `/start`, tariffs grants, Cars/Houses gate. Assert **current** scheduler defaults (`EXPIRY_WINDOW_UNIT == "minute"`, minutely cron) until ЮKassa restores day + Moscow 10:00.
+Run `pytest` from this repo root. Coverage: subscription expiry (minute harness windows + delivery resilience), `has_active_subscription`, trial `/start`, tariffs grants, Cars/Houses/Computers gate. Assert **current** scheduler defaults (`EXPIRY_WINDOW_UNIT == "minute"`, minutely cron) until ЮKassa restores day + Moscow 10:00.
 
 ## Deploy
 - CI: push to `main` (or `workflow_dispatch`) → build/push `ghcr.io/<github.repository>:latest` → SSH to VPS.
