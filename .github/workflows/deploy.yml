@@ -41,16 +41,15 @@ jobs:
     steps:
       - name: Prepare SSH key
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" | base64 -d > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.SSH_KEY }}" | base64 -d > "${{ github.workspace }}/deploy_key"
+          chmod 600 "${{ github.workspace }}/deploy_key"
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          key_path: /home/runner/.ssh/deploy_key
+          key_path: /github/workspace/deploy_key
           script: |
             set -e
             cd /home/deploy/my-study-bot
