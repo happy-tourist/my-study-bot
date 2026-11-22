@@ -22,6 +22,7 @@ from app.auth import (
     is_admin_user,
     parse_admin_ids,
 )
+from app.bot_commands import sync_commands_for_user
 from app.database import User
 from app.states import AdminSearchForm
 
@@ -365,6 +366,7 @@ async def admin_promote(callback: CallbackQuery, session: AsyncSession):
 
     user.is_admin = True
     await session.commit()
+    await sync_commands_for_user(callback.bot, user.id, is_admin=True)
     await callback.message.edit_text(
         _format_user_card(user) + "\n\nПользователь назначен администратором.",
         reply_markup=kb.admin_user_card_kb(
@@ -396,6 +398,7 @@ async def admin_demote(callback: CallbackQuery, session: AsyncSession):
 
     user.is_admin = False
     await session.commit()
+    await sync_commands_for_user(callback.bot, user.id, is_admin=False)
     await callback.message.edit_text(
         _format_user_card(user) + "\n\nАдмин-права сняты.",
         reply_markup=kb.admin_user_card_kb(

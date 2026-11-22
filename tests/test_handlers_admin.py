@@ -6,10 +6,12 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.types import BotCommandScopeChat
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.keyboards as kb
+from app.bot_commands import learner_bot_commands
 from app.database import User
 from app.handlers_admin import (
     admin_ban,
@@ -188,6 +190,47 @@ async def test_admin_demote_sc_adm_06(session: AsyncSession, monkeypatch):
     assert result.scalar_one().is_admin is False
     assert "Админ-права сняты" in callback.message.edit_text.await_args.args[0]
     callback.answer.assert_awaited()
+
+
+async def test_promote_demote_syncs_menu_commands_sc_adm_cmd_03(
+    session: AsyncSession, monkeypatch
+):
+    """SC-ADM-CMD-03: promote sets admin list; demote sets learner (not delete_my_commands)."""
+    monkeypatch.setenv("ADMIN_IDS", "")
+    target_id = 9310
+    await _seed_user(session, user_id=ADMIN_ID, is_admin=True)
+    await _seed_user(session, user_id=target_id, is_admin=False, is_banned=False)
+
+    promote_cb = _make_callback(user_id=ADMIN_ID, data=f"{kb.ADMIN_PROMOTE_PREFIX}{target_id}")
+    promote_cb.bot = AsyncMock()
+    promote_cb.bot.set_my_commands = AsyncMock()
+    promote_cb.bot.delete_my_commands = AsyncMock()
+    await admin_promote(promote_cb, session)
+
+    promote_cb.bot.set_my_commands.assert_awaited_once()
+    p_args, p_kwargs = promote_cb.bot.set_my_commands.await_args
+    p_commands = p_args[0] if p_args else p_kwargs["commands"]
+    p_scope = p_kwargs.get("scope") or p_args[1]
+    assert "admin" in [c.command for c in p_commands]
+    assert isinstance(p_scope, BotCommandScopeChat)
+    assert p_scope.chat_id == target_id
+    promote_cb.bot.delete_my_commands.assert_not_awaited()
+
+    demote_cb = _make_callback(user_id=ADMIN_ID, data=f"{kb.ADMIN_DEMOTE_PREFIX}{target_id}")
+    demote_cb.bot = AsyncMock()
+    demote_cb.bot.set_my_commands = AsyncMock()
+    demote_cb.bot.delete_my_commands = AsyncMock()
+    await admin_demote(demote_cb, session)
+
+    demote_cb.bot.set_my_commands.assert_awaited_once()
+    d_args, d_kwargs = demote_cb.bot.set_my_commands.await_args
+    d_commands = d_args[0] if d_args else d_kwargs["commands"]
+    d_scope = d_kwargs.get("scope") or d_args[1]
+    assert [c.command for c in d_commands] == [c.command for c in learner_bot_commands()]
+    assert "admin" not in [c.command for c in d_commands]
+    assert isinstance(d_scope, BotCommandScopeChat)
+    assert d_scope.chat_id == target_id
+    demote_cb.bot.delete_my_commands.assert_not_awaited()
 
 
 async def test_admin_ban_non_admin_sc_adm_07(session: AsyncSession, monkeypatch):

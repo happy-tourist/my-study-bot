@@ -1,10 +1,11 @@
 import app.keyboards as kb
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
+from aiogram.types import InlineKeyboardMarkup, Message, CallbackQuery
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from app.auth import (
     is_admin_user,
     is_banned_user,
 )
+from app.bot_commands import admin_bot_commands, learner_bot_commands, sync_commands_for_user
 from app.database import User
 
 
@@ -23,10 +25,19 @@ TRIAL_MINUTES = 3
 
 _ACCESS_CLOSED_TEXT = "Доступ закрыт."
 
+_START_FIRST_TEXT = "Сначала нажми /start"
+
 _SUBSCRIPTION_REQUIRED_TEXT = (
     "Доступ к разделу требует активной подписки.\n"
     "Оформи подписку в разделе «Подписка»."
 )
+
+_HELP_INTRO_TEXT = (
+    "Я бот для обучения: разделы контента и подписка.\n"
+    "Команды:"
+)
+
+ReplySender = Callable[..., Awaitable[None]]
 
 
 async def _load_user(session: AsyncSession, user_id: int) -> User | None:
@@ -39,16 +50,31 @@ async def _refuse_access_closed(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-async def _refuse_without_subscription(callback: CallbackQuery) -> None:
-    await callback.message.edit_text(
-        _SUBSCRIPTION_REQUIRED_TEXT,
-        reply_markup=kb.subscription_required_kb(),
-    )
-    await callback.answer()
-
-
 def _menu_markup(user: User | None, *, telegram_id: int) -> InlineKeyboardMarkup:
     return kb.main_menu_kb(show_admin=is_admin_user(user, telegram_id=telegram_id))
+
+
+async def _send_gated_topic(
+    user: User | None,
+    *,
+    section: str,
+    send: ReplySender,
+) -> None:
+    """Ban → subscription gate → topic stub (shared by inline edit and slash answer)."""
+    if is_banned_user(user):
+        await send(_ACCESS_CLOSED_TEXT)
+        return
+    if not has_active_subscription(user):
+        await send(
+            _SUBSCRIPTION_REQUIRED_TEXT,
+            reply_markup=kb.subscription_required_kb(),
+        )
+        return
+
+    await send(
+        f"Раздел «{section}»\nЗдесь будет контент.",
+        reply_markup=kb.back_to_menu_kb(),
+    )
 
 
 async def _open_gated_topic_stub(
@@ -56,18 +82,44 @@ async def _open_gated_topic_stub(
 ) -> None:
     """Ban → subscription gate → topic stub (Cars/Houses/Computers)."""
     user = await _load_user(session, callback.from_user.id)
-    if is_banned_user(user):
-        await _refuse_access_closed(callback)
-        return
-    if not has_active_subscription(user):
-        await _refuse_without_subscription(callback)
+
+    async def send(text: str, reply_markup=None) -> None:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+
+    await _send_gated_topic(user, section=section, send=send)
+    await callback.answer()
+
+
+async def _cmd_gated_topic(
+    message: Message, session: AsyncSession, *, section: str
+) -> None:
+    """Slash topic entry: unregistered → /start hint; else same ban→gate→stub as inline."""
+    user = await _load_user(session, message.from_user.id)
+    if user is None:
+        await message.answer(_START_FIRST_TEXT)
         return
 
-    await callback.message.edit_text(
-        f"Раздел «{section}»\nЗдесь будет контент.",
-        reply_markup=kb.back_to_menu_kb(),
+    async def send(text: str, reply_markup=None) -> None:
+        await message.answer(text, reply_markup=reply_markup)
+
+    await _send_gated_topic(user, section=section, send=send)
+
+
+def _help_text(*, is_admin: bool) -> str:
+    commands = admin_bot_commands() if is_admin else learner_bot_commands()
+    lines = [_HELP_INTRO_TEXT]
+    for cmd in commands:
+        lines.append(f"/{cmd.command} — {cmd.description}")
+    return "\n".join(lines)
+
+
+async def _sync_start_commands(message: Message, user: User) -> None:
+    telegram_id = message.from_user.id
+    await sync_commands_for_user(
+        message.bot,
+        telegram_id,
+        is_admin=is_admin_user(user, telegram_id=telegram_id),
     )
-    await callback.answer()
 
 
 @router.message(CommandStart())
@@ -85,6 +137,7 @@ async def cmd_start(message: Message, session: AsyncSession):
         )
         session.add(user)
         await session.commit()
+        await _sync_start_commands(message, user)
         await message.answer(
             "Привет! Я тебя запомнил 👋\n\n"
             "Тебе активирован пробный период на 3 дня (3 мин).\n\n"
@@ -93,6 +146,8 @@ async def cmd_start(message: Message, session: AsyncSession):
         )
         return
 
+    await _sync_start_commands(message, user)
+
     if is_banned_user(user):
         await message.answer(_ACCESS_CLOSED_TEXT)
         return
@@ -100,6 +155,47 @@ async def cmd_start(message: Message, session: AsyncSession):
     await message.answer(
         f"С возвращением, {message.from_user.first_name}!\n\nВыбери раздел:",
         reply_markup=_menu_markup(user, telegram_id=user_id),
+    )
+
+
+@router.message(Command("cars"))
+async def cmd_cars(message: Message, session: AsyncSession):
+    await _cmd_gated_topic(message, session, section="Машины")
+
+
+@router.message(Command("houses"))
+async def cmd_houses(message: Message, session: AsyncSession):
+    await _cmd_gated_topic(message, session, section="Дома")
+
+
+@router.message(Command("computers"))
+async def cmd_computers(message: Message, session: AsyncSession):
+    await _cmd_gated_topic(message, session, section="Компьютеры")
+
+
+@router.message(Command("subscription"))
+async def cmd_subscription(message: Message, session: AsyncSession):
+    user = await _load_user(session, message.from_user.id)
+    if user is None:
+        await message.answer(_START_FIRST_TEXT)
+        return
+    if is_banned_user(user):
+        await message.answer(_ACCESS_CLOSED_TEXT)
+        return
+    show_trial = not user.trial_used
+    await message.answer(
+        "Выбери тариф подписки:",
+        reply_markup=kb.tariffs_kb(show_trial=show_trial),
+    )
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message, session: AsyncSession):
+    user = await _load_user(session, message.from_user.id)
+    await message.answer(
+        _help_text(
+            is_admin=is_admin_user(user, telegram_id=message.from_user.id),
+        )
     )
 
 
@@ -136,7 +232,7 @@ async def menu_subscription(callback: CallbackQuery, session: AsyncSession):
 async def claim_trial(callback: CallbackQuery, session: AsyncSession):
     user = await _load_user(session, callback.from_user.id)
     if user is None:
-        await callback.answer("Сначала нажми /start", show_alert=True)
+        await callback.answer(_START_FIRST_TEXT, show_alert=True)
         return
     if is_banned_user(user):
         await _refuse_access_closed(callback)
@@ -168,7 +264,7 @@ async def tariff_grant(callback: CallbackQuery, session: AsyncSession):
 
     user = await _load_user(session, callback.from_user.id)
     if user is None:
-        await callback.answer("Сначала нажми /start", show_alert=True)
+        await callback.answer(_START_FIRST_TEXT, show_alert=True)
         return
     if is_banned_user(user):
         await _refuse_access_closed(callback)

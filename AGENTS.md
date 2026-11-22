@@ -10,10 +10,11 @@ This repository is the bot-only package. Shared specs, skills, and docs belong i
 ## What It Is Used For
 Main scenarios (target product; study **content** still stubby):
 
-- `/start` — upsert Telegram user into SQLite; first visit grants one-time trial (`trial_used`, 3 min / «3 дня»); greet + inline topic menu.
+- `/start` — upsert Telegram user into SQLite; first visit grants one-time trial (`trial_used`, 3 min / «3 дня»); sync Menu Button commands for the chat; greet + inline topic menu.
 - Persist user fields (Telegram id, username, `subscription_end`, `is_active`, `trial_used`, `is_admin`, `is_banned`).
+- Menu Button (бургер) — learner commands via `app/bot_commands.py` (`/start`, разделы, `/help`); `/admin` only for admins; slash разделы/`subscription` с тем же ban/gate, что inline; `/help` без обязательного `/start`.
 - «Подписка» — tariffs catalog (grant without payment); one-time «Получить пробный период» when `trial_used` is False; Cars/Houses/Computers gated via `has_active_subscription` (`app/auth.py`).
-- `/admin` + кнопка «Админ» — операторская панель (статистика, списки, поиск, ban/unban, роли, grant/revoke тарифов) для bootstrap `ADMIN_IDS` и `User.is_admin`.
+- `/admin` + кнопка «Админ» — операторская панель (статистика, списки, поиск, ban/unban, роли, grant/revoke тарифов) для bootstrap `ADMIN_IDS` и `User.is_admin`; promote/demote sync Menu Button у target.
 - (Planned) real study lesson flows / FSM forms — extend `app/handlers.py`, `app/states.py`, `app/keyboards.py`.
 
 ## Who The Users Are
@@ -39,8 +40,9 @@ Deploy target: VPS under `/home/deploy/my-study-bot`, Docker Compose + image fro
 | Background expiry | `app/scheduler.py` — **temporary** minute windows + cron `minute="*"` (restore day + 10:00 MSK with ЮKassa); reminds 3/2/1, deactivates on expire |
 | FSM forms / keyboards | `app/keyboards.py` — topic menu, tariffs, gate CTA, admin panel builders; `app/states.py` — `AdminSearchForm` for admin search |
 | Modular routers | Learner `app/handlers.py` + admin `app/handlers_admin.py`, both included from `main.py`; gate/admin helpers in `app/auth.py` |
+| Menu Button commands | `app/bot_commands.py` + startup `set_my_commands` / `MenuButtonCommands`; sync on `/start` and promote/demote |
 | `.env.example` | Missing — document vars here; add example when convenient |
-| Automated tests | `tests/` — pytest + pytest-asyncio (expiry, auth helper, trial/tariffs/gate handlers) |
+| Automated tests | `tests/` — pytest + pytest-asyncio (expiry, auth helper, trial/tariffs/gate, Menu Button / slash, admin) |
 
 When adding study/subscription behavior, prefer extending the existing `User` model and middleware session injection rather than inventing a parallel data path. Expiry side effects stay in `app/scheduler.py`.
 
@@ -66,7 +68,7 @@ Application entry: `main.py` → `asyncio.run(main())` → `dp.start_polling(bot
 3. `Dispatcher` + `DbSessionMiddleware` on updates.
 4. `await init_db()` — `create_all` + `_ensure_sqlite_user_columns` (missing columns from `_SQLITE_USER_COLUMN_DDL`; volume not wiped on deploy).
 5. `dp.include_router(router)` from `app.handlers`.
-6. Register `startup` / `shutdown` hooks — `start_scheduler(bot)` / `stop_scheduler()`.
+6. Register `startup` / `shutdown` hooks — startup: default learner `set_my_commands` + `MenuButtonCommands`, then `start_scheduler(bot)`; shutdown: `stop_scheduler()`.
 7. `start_polling`.
 
 ## Config And Env
@@ -97,7 +99,10 @@ From `app/handlers.py` today:
 
 | Trigger | Behavior |
 |---------|----------|
-| `/start` | Create `User` if missing (one-time trial); greet; attach inline topic menu (Admin button when admin); banned → «Доступ закрыт.» |
+| `/start` | Create `User` if missing (one-time trial); sync chat Menu Button commands (admin vs learner via `is_admin_user`); greet; attach inline topic menu (Admin button when admin); banned → sync then «Доступ закрыт.» |
+| `/cars` `/houses` `/computers` | Unregistered → «Сначала нажми /start»; else same ban → gate → stub as inline (new message, not edit) |
+| `/subscription` | Unregistered → «Сначала нажми /start»; ban → closed; else tariffs (new message) |
+| `/help` | Short RU guide + command list (admin includes `/admin`); works unregistered/banned; no topic menu |
 | `menu:cars` / `menu:houses` / `menu:computers` | Ban check first; then gate via `has_active_subscription`; stub content or refuse + subscription CTA |
 | `menu:subscription` | Tariffs list (ban → access closed; otherwise always open) |
 | `tariff:*` / `trial:claim` | Ban check; grant tariff minutes / one-time trial onto `subscription_end` |
@@ -106,25 +111,27 @@ From `app/handlers.py` today:
 
 Builders / helpers:
 
+- `app/bot_commands.py` — `learner_bot_commands` / `admin_bot_commands` / `sync_commands_for_user` (Menu Button lists; promote/demote + `/start` sync).
 - `app/keyboards.py` — `main_menu_kb(show_admin=…)`, `back_to_menu_kb()`, `tariffs_kb()`, `subscription_required_kb()`, admin builders (`admin:*`).
 - `app/auth.py` — `has_active_subscription`, `is_admin_user` / `is_banned_user`, `extend_subscription`, promote/demote/ban guards.
 - `app/states.py` — `AdminSearchForm` (admin user search).
-- `app/handlers_admin.py` — admin panel Router (`/admin`, stats, lists, search, card mutations).
+- `app/handlers_admin.py` — admin panel Router (`/admin`, stats, lists, search, card mutations); promote/demote sync Menu Button for target.
 - `app/scheduler.py` — temporary minute expiry reminders + deactivation (restore day + 10:00 MSK with ЮKassa).
 
 Keep Russian user-facing strings consistent with existing replies unless product copy is being redesigned.
 
 ## Combined Structure
-- `main.py` - process entry (Bot, Dispatcher, polling, platform-specific session, scheduler hooks).
-- `app/handlers.py` - learner routers / commands.
+- `main.py` - process entry (Bot, Dispatcher, polling, platform-specific session, Menu Button startup, scheduler hooks).
+- `app/handlers.py` - learner routers / commands (incl. slash sections + `/help`).
 - `app/handlers_admin.py` - admin panel router.
+- `app/bot_commands.py` - Telegram BotCommand builders + per-chat Menu Button sync.
 - `app/auth.py` - subscription gate + admin/ban helpers.
 - `app/database.py` - SQLAlchemy models + engine.
 - `app/middlewares.py` - DB session injection.
 - `app/keyboards.py` - inline topic-menu / tariffs / gate CTA / admin builders.
 - `app/scheduler.py` - APScheduler subscription expiry job.
 - `app/states.py` - FSM (`AdminSearchForm`).
-- `tests/` - pytest suite (expiry, auth, trial/tariffs/gate, admin panel).
+- `tests/` - pytest suite (expiry, auth, trial/tariffs/gate, Menu Button / slash, admin panel).
 - `requirements.txt` - pinned runtime deps (incl. `apscheduler`).
 - `Dockerfile` / `docker-compose.yml` - image and VPS run.
 - `.github/workflows/deploy.yml` - build/push GHCR + SSH compose deploy.
@@ -137,10 +144,10 @@ Typical paths:
 - Persistence → SQLAlchemy `AsyncSession` → SQLite file under `data/`.
 - Background → `AsyncIOScheduler` → `check_subscriptions` (own session) → `Bot.send_message` / `User.is_active`.
 
-Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; gate math in `auth.py`; multi-step dialogs in `states.py`; expiry in `scheduler.py`. Do not put business logic only inside `main.py`.
+Prefer thin handlers: DB access via injected session; shared UI in `keyboards.py`; Menu Button lists/sync in `bot_commands.py`; gate math in `auth.py`; multi-step dialogs in `states.py`; expiry in `scheduler.py`. Do not put business logic only inside `main.py`.
 
 ## Tests
-Run `pytest` from this repo root. Coverage: subscription expiry (minute harness windows + delivery resilience), `has_active_subscription`, trial `/start`, tariffs grants, Cars/Houses/Computers gate. Assert **current** scheduler defaults (`EXPIRY_WINDOW_UNIT == "minute"`, minutely cron) until ЮKassa restores day + Moscow 10:00.
+Run `pytest` from this repo root. Coverage: subscription expiry (minute harness windows + delivery resilience), `has_active_subscription`, trial `/start`, tariffs grants, Cars/Houses/Computers gate, Menu Button builders / slash / `/start` sync / promote-demote sync. Assert **current** scheduler defaults (`EXPIRY_WINDOW_UNIT == "minute"`, minutely cron) until ЮKassa restores day + Moscow 10:00.
 
 ## Deploy
 - CI: push to `main` (or `workflow_dispatch`) → build/push `ghcr.io/<github.repository>:latest` → SSH to VPS.

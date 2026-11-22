@@ -1,15 +1,20 @@
 import os
 import sys
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommandScopeDefault, MenuButtonCommands
 from dotenv import load_dotenv
 
+from app.bot_commands import learner_bot_commands
 from app.handlers import router
 from app.handlers_admin import router as admin_router
 from app.database import init_db
 from app.middlewares import DbSessionMiddleware
 from app.scheduler import start_scheduler, stop_scheduler
+
+logger = logging.getLogger(__name__)
 
 
 async def main():
@@ -48,6 +53,15 @@ async def main():
 
 async def startup(dispatcher: Dispatcher, bot: Bot):
     print("Bot starting up....")
+    try:
+        await bot.set_my_commands(
+            learner_bot_commands(),
+            scope=BotCommandScopeDefault(),
+        )
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception:
+        # Soft-fail: keep polling + expiry scheduler even if Menu Button API is down.
+        logger.exception("Failed to set default Menu Button commands on startup")
     start_scheduler(bot)
 
 
