@@ -17,6 +17,7 @@ def learner_bot_commands() -> list[BotCommand]:
         BotCommand(command="cars", description="🚗 Машины"),
         BotCommand(command="houses", description="🏠 Дома"),
         BotCommand(command="computers", description="💻 Компьютеры"),
+        BotCommand(command="chinese", description="🇨🇳 Курсы китайского"),
         BotCommand(command="subscription", description="💳 Подписка"),
         BotCommand(command="help", description="Справка и список команд"),
     ]

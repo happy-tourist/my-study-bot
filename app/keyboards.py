@@ -4,6 +4,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 MENU_CARS = "menu:cars"
 MENU_HOUSES = "menu:houses"
 MENU_COMPUTERS = "menu:computers"
+MENU_CHINESE = "menu:chinese"
 MENU_SUBSCRIPTION = "menu:subscription"
 MENU_ADMIN = "menu:admin"
 MENU_BACK = "menu:back"
@@ -54,6 +55,7 @@ def main_menu_kb(*, show_admin: bool = False) -> InlineKeyboardMarkup:
     b.button(text="🚗 Машины", callback_data=MENU_CARS)
     b.button(text="🏠 Дома", callback_data=MENU_HOUSES)
     b.button(text="💻 Компьютеры", callback_data=MENU_COMPUTERS)
+    b.button(text="🇨🇳 Курсы китайского", callback_data=MENU_CHINESE)
     b.button(text="💳 Подписка", callback_data=MENU_SUBSCRIPTION)
     if show_admin:
         b.button(text="🛠 Админ", callback_data=MENU_ADMIN)

@@ -80,7 +80,7 @@ async def _send_gated_topic(
 async def _open_gated_topic_stub(
     callback: CallbackQuery, session: AsyncSession, *, section: str
 ) -> None:
-    """Ban → subscription gate → topic stub (Cars/Houses/Computers)."""
+    """Ban → subscription gate → topic stub (Cars/Houses/Computers/Chinese)."""
     user = await _load_user(session, callback.from_user.id)
 
     async def send(text: str, reply_markup=None) -> None:
@@ -173,6 +173,11 @@ async def cmd_computers(message: Message, session: AsyncSession):
     await _cmd_gated_topic(message, session, section="Компьютеры")
 
 
+@router.message(Command("chinese"))
+async def cmd_chinese(message: Message, session: AsyncSession):
+    await _cmd_gated_topic(message, session, section="Курсы китайского")
+
+
 @router.message(Command("subscription"))
 async def cmd_subscription(message: Message, session: AsyncSession):
     user = await _load_user(session, message.from_user.id)
@@ -212,6 +217,11 @@ async def menu_houses(callback: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data == kb.MENU_COMPUTERS)
 async def menu_computers(callback: CallbackQuery, session: AsyncSession):
     await _open_gated_topic_stub(callback, session, section="Компьютеры")
+
+
+@router.callback_query(F.data == kb.MENU_CHINESE)
+async def menu_chinese(callback: CallbackQuery, session: AsyncSession):
+    await _open_gated_topic_stub(callback, session, section="Курсы китайского")
 
 
 @router.callback_query(F.data == kb.MENU_SUBSCRIPTION)

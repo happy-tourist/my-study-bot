@@ -1,4 +1,4 @@
-"""SC-CMD-01…09, SC-HELP-01…03, SC-ADM-CMD-01/02: Menu Button builders, slash, /help, /start sync."""
+"""SC-CMD-01…10, SC-HELP-01…03, SC-ADM-CMD-01/02: Menu Button builders, slash, /help, /start sync."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.database import User
 from app.handlers import (
     _SUBSCRIPTION_REQUIRED_TEXT,
     cmd_cars,
+    cmd_chinese,
     cmd_computers,
     cmd_help,
     cmd_houses,
@@ -27,11 +28,20 @@ from app.handlers import (
 NOW = datetime(2026, 9, 13, 12, 0, 0)
 BOOTSTRAP_ID = 463353358
 
-LEARNER_COMMANDS = ("start", "cars", "houses", "computers", "subscription", "help")
+LEARNER_COMMANDS = (
+    "start",
+    "cars",
+    "houses",
+    "computers",
+    "chinese",
+    "subscription",
+    "help",
+)
 SECTION_DESCRIPTIONS = {
     "cars": "🚗 Машины",
     "houses": "🏠 Дома",
     "computers": "💻 Компьютеры",
+    "chinese": "🇨🇳 Курсы китайского",
     "subscription": "💳 Подписка",
 }
 
@@ -233,6 +243,27 @@ async def test_cmd_computers_active_subscriber_sc_cmd_07(
     await cmd_computers(message, session)
 
     assert message.answer.await_args.args[0] == "Раздел «Компьютеры»\nЗдесь будет контент."
+    assert message.answer.await_args.kwargs["reply_markup"] is not None
+
+
+async def test_cmd_chinese_active_subscriber_sc_cmd_10(
+    session: AsyncSession, monkeypatch
+):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=508,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    message = _make_message(user_id=508)
+    await cmd_chinese(message, session)
+
+    assert (
+        message.answer.await_args.args[0]
+        == "Раздел «Курсы китайского»\nЗдесь будет контент."
+    )
     assert message.answer.await_args.kwargs["reply_markup"] is not None
 
 

@@ -1,4 +1,4 @@
-"""SC-START-01…06, SC-TAR-01…05, SC-GATE-01…08, SC-MENU-01…06: trial, tariffs, gate, admin menu, ban."""
+"""SC-START-01…06, SC-TAR-01…05, SC-GATE-01…11, SC-MENU-01…07: trial, tariffs, gate, admin menu, ban."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.handlers import (
     cmd_start,
     menu_back,
     menu_cars,
+    menu_chinese,
     menu_computers,
     menu_houses,
     menu_subscription,
@@ -87,13 +88,19 @@ def _inline_labels(markup) -> list[str]:
 
 
 def _assert_main_topic_labels(markup) -> None:
-    """Canonical topic set on main_menu_kb (Cars/Houses/Computers + Subscription)."""
+    """Canonical topic set/order on main_menu_kb (Cars→Houses→Computers→Chinese→Subscription)."""
     assert markup is not None
     labels = _inline_labels(markup)
     assert any("Машины" in t for t in labels)
     assert any("Дома" in t for t in labels)
     assert any("Компьютеры" in t for t in labels)
+    assert any("Курсы китайского" in t for t in labels)
     assert any("Подписка" in t for t in labels)
+    # Design order: topics before Subscription (Chinese after Computers).
+    idx_computers = next(i for i, t in enumerate(labels) if "Компьютеры" in t)
+    idx_chinese = next(i for i, t in enumerate(labels) if "Курсы китайского" in t)
+    idx_subscription = next(i for i, t in enumerate(labels) if "Подписка" in t)
+    assert idx_computers < idx_chinese < idx_subscription
 
 
 # --- /start trial (SC-START-01…03) ---
@@ -354,6 +361,29 @@ async def test_active_subscriber_opens_computers_sc_gate_06(
     callback.answer.assert_awaited_once()
 
 
+async def test_active_subscriber_opens_chinese_sc_gate_09(
+    session: AsyncSession, monkeypatch
+):
+    """SC-GATE-09 / SC-MENU-07: active subscriber opens Chinese courses stub."""
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=308,
+        trial_used=True,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    callback = _make_callback(user_id=308, data=kb.MENU_CHINESE)
+    await menu_chinese(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == "Раздел «Курсы китайского»\nЗдесь будет контент."
+    assert _SUBSCRIPTION_REQUIRED_TEXT not in text
+    assert callback.message.edit_text.await_args.kwargs["reply_markup"] is not None
+    callback.answer.assert_awaited_once()
+
+
 async def test_inactive_refused_cars_sc_gate_03(session: AsyncSession, monkeypatch):
     _freeze_utcnow(monkeypatch)
     await _seed_user(
@@ -392,6 +422,27 @@ async def test_inactive_refused_computers_sc_gate_07(session: AsyncSession, monk
     text = callback.message.edit_text.await_args.args[0]
     assert text == _SUBSCRIPTION_REQUIRED_TEXT
     assert "Раздел «Компьютеры»" not in text
+    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    assert any("Подписка" in t for t in _inline_labels(markup))
+    callback.answer.assert_awaited_once()
+
+
+async def test_inactive_refused_chinese_sc_gate_10(session: AsyncSession, monkeypatch):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=309,
+        trial_used=True,
+        is_active=False,
+        subscription_end=NOW - timedelta(minutes=1),
+    )
+
+    callback = _make_callback(user_id=309, data=kb.MENU_CHINESE)
+    await menu_chinese(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == _SUBSCRIPTION_REQUIRED_TEXT
+    assert "Раздел «Курсы китайского»" not in text
     markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
     assert any("Подписка" in t for t in _inline_labels(markup))
     callback.answer.assert_awaited_once()
@@ -509,6 +560,27 @@ async def test_banned_refused_computers_sc_gate_08(session: AsyncSession, monkey
     text = callback.message.edit_text.await_args.args[0]
     assert text == "Доступ закрыт."
     assert "Компьютеры" not in text
+    assert _SUBSCRIPTION_REQUIRED_TEXT not in text
+    callback.answer.assert_awaited_once()
+
+
+async def test_banned_refused_chinese_sc_gate_11(session: AsyncSession, monkeypatch):
+    _freeze_utcnow(monkeypatch)
+    await _seed_user(
+        session,
+        user_id=407,
+        trial_used=True,
+        is_banned=True,
+        is_active=True,
+        subscription_end=NOW + timedelta(minutes=5),
+    )
+
+    callback = _make_callback(user_id=407, data=kb.MENU_CHINESE)
+    await menu_chinese(callback, session)
+
+    text = callback.message.edit_text.await_args.args[0]
+    assert text == "Доступ закрыт."
+    assert "Курсы китайского" not in text
     assert _SUBSCRIPTION_REQUIRED_TEXT not in text
     callback.answer.assert_awaited_once()
 
